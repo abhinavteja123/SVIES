@@ -13,6 +13,8 @@ import {
   Users,
   Car,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,7 +34,7 @@ const NAV_LINKS = [
   { to: '/users', icon: Users, label: 'User Management', minRole: 'POLICE' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ collapsed, onToggle }) {
   const { user, role, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -51,15 +53,24 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-header">
         <div className="sidebar-logo">
           <Shield />
         </div>
-        <div className="sidebar-title">
-          <h1>SVIES</h1>
-          <p>Smart Vehicle Intelligence</p>
-        </div>
+        {!collapsed && (
+          <div className="sidebar-title">
+            <h1>SVIES</h1>
+            <p>Smart Vehicle Intelligence</p>
+          </div>
+        )}
+        <button
+          className="sidebar-toggle"
+          onClick={onToggle}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
       </div>
 
       <nav className="sidebar-nav">
@@ -71,27 +82,30 @@ export default function Sidebar() {
             className={({ isActive }) =>
               `nav-item${isActive ? ' active' : ''}`
             }
+            title={collapsed ? label : undefined}
           >
             <span className="icon">
               <Icon />
             </span>
-            <span>{label}</span>
+            {!collapsed && <span className="nav-label">{label}</span>}
           </NavLink>
         ))}
       </nav>
 
       <div className="sidebar-footer">
         <span className="status-dot" />
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          {user?.email && (
-            <span title={user.email} style={{ display: 'block', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user.email}
+        {!collapsed && (
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            {user?.email && (
+              <span title={user.email} style={{ display: 'block', fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user.email}
+              </span>
+            )}
+            <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-accent)' }}>
+              {role}
             </span>
-          )}
-          <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-accent)' }}>
-            {role}
-          </span>
-        </div>
+          </div>
+        )}
         {user && (
           <button
             onClick={handleLogout}

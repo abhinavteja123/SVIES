@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, connectLiveFeed } from '../api';
 import { StatusBadge } from '../components';
+import { Video, Camera, Aperture, MapPin } from 'lucide-react';
 
 const VERIFY_BADGE = {
   groq_verified: { label: 'Groq Verified', bg: 'rgba(34,197,94,0.18)', color: '#4ade80', icon: '\u2705' },
@@ -41,12 +42,23 @@ export default function LiveDetection() {
   const [photoResult, setPhotoResult] = useState(null);
   const [photoLoading, setPhotoLoading] = useState(false);
 
+  // Zone selection state
+  const [zones, setZones] = useState([]);
+  const [selectedZone, setSelectedZone] = useState('');
+
   const fileRef = useRef(null);
   const photoRef = useRef(null);
   const pollRef = useRef(null);
 
   // Track which plates we've already added to history (dedup by plate+alert)
   const seenPlatesRef = useRef(new Map()); // plate -> last added timestamp
+
+  // Fetch zones on mount
+  useEffect(() => {
+    api.getZones()
+      .then(d => setZones(d.zones || []))
+      .catch(console.error);
+  }, []);
 
   // Connect to live feed WebSocket when webcam is active or video is processing
   useEffect(() => {
@@ -203,6 +215,43 @@ export default function LiveDetection() {
         <p>Upload a video or photo to run the SVIES detection pipeline</p>
       </div>
 
+      {/* ── Zone Selector (always visible before detection starts) ── */}
+      {!mode && !processing && !liveFrame && (
+        <div className="card" style={{ padding: '16px 22px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <MapPin size={20} color="var(--accent-primary)" />
+            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
+              Select Monitoring Zone
+            </span>
+            <select
+              className="form-select"
+              value={selectedZone}
+              onChange={e => setSelectedZone(e.target.value)}
+              style={{ flex: 1, maxWidth: 320 }}
+            >
+              <option value="">No Zone (General Detection)</option>
+              {zones.map(z => (
+                <option key={z.id} value={z.id}>
+                  {z.name} — {z.type} (×{z.multiplier} risk)
+                </option>
+              ))}
+            </select>
+            {selectedZone && (
+              <span style={{
+                padding: '4px 12px', borderRadius: 12, fontSize: 12, fontWeight: 600,
+                background: 'rgba(34,197,94,0.12)', color: '#22c55e',
+                border: '1px solid rgba(34,197,94,0.25)',
+              }}>
+                ✓ Zone Selected
+              </span>
+            )}
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, marginBottom: 0 }}>
+            Selecting a zone applies the zone's risk multiplier to all detections and updates the Zone Map with activity data.
+          </p>
+        </div>
+      )}
+
       {/* ── Mode Selector (shown when nothing is active) ── */}
       {!mode && !processing && !liveFrame && (
         <div
@@ -222,7 +271,7 @@ export default function LiveDetection() {
             }}
             onClick={() => { setMode('video'); setTimeout(() => fileRef.current?.click(), 50); }}
           >
-            <div style={{ fontSize: 48, marginBottom: 14 }}>🎬</div>
+            <Video size={48} color="var(--text-muted)" style={{ marginBottom: 14, margin: '0 auto' }} />
             <h3 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>Upload Video</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 0 }}>
               MP4, AVI, MOV — Process frames through full pipeline
@@ -244,7 +293,7 @@ export default function LiveDetection() {
             }}
             onClick={() => { setMode('photo'); setTimeout(() => photoRef.current?.click(), 50); }}
           >
-            <div style={{ fontSize: 48, marginBottom: 14 }}>📷</div>
+            <Camera size={48} color="var(--text-muted)" style={{ marginBottom: 14, margin: '0 auto' }} />
             <h3 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>Upload Photo</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 0 }}>
               JPG, PNG — Run 7-layer pipeline on a single image
@@ -267,7 +316,7 @@ export default function LiveDetection() {
             }}
             onClick={handleWebcamStart}
           >
-            <div style={{ fontSize: 48, marginBottom: 14 }}>🎥</div>
+            <Aperture size={48} color="var(--text-muted)" style={{ marginBottom: 14, margin: '0 auto' }} />
             <h3 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>
               {webcamLoading ? 'Starting Camera...' : 'Live Camera'}
             </h3>
@@ -290,7 +339,7 @@ export default function LiveDetection() {
       {/* ── Video mode: file selected but not yet uploaded ── */}
       {mode === 'video' && videoFile && !processing && !liveFrame && (
         <div className="card" style={{ textAlign: 'center', padding: 40, marginBottom: 20 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🎬</div>
+          <Video size={48} color="var(--text-muted)" style={{ marginBottom: 16, margin: '0 auto' }} />
           <h3 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>{videoFile.name}</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 20 }}>
             {(videoFile.size / 1024 / 1024).toFixed(1)} MB

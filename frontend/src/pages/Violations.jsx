@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { AlertTriangle, Search, Download, X } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { AlertTriangle, Search, Download, X, MessageSquare } from 'lucide-react';
 import { api, API_BASE } from '../api';
 import { StatusBadge, LoadingSpinner, EmptyState } from '../components';
 
@@ -19,6 +19,9 @@ export default function Violations() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [selectedViolation, setSelectedViolation] = useState(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [feedbackData, setFeedbackData] = useState({ correctPlate: '', correctVehicleType: '', falsePositives: '', notes: '' });
   const debounceRef = useRef(null);
 
   /* ── Fetch violations from API ── */
@@ -81,6 +84,32 @@ export default function Violations() {
     if (path.startsWith('http')) return path;
     return `${API_BASE}${path}`;
   };
+
+  const openViolationModal = (v) => {
+    setSelectedViolation(v);
+    setFeedbackOpen(false);
+    setFeedbackSent(false);
+    setFeedbackData({ correctPlate: '', correctVehicleType: '', falsePositives: '', notes: '' });
+  };
+
+  const handleViolationFeedback = useCallback(async () => {
+    if (!selectedViolation) return;
+    try {
+      await api.submitFeedback({
+        original_plate: selectedViolation.plate,
+        correct_plate: feedbackData.correctPlate || selectedViolation.plate,
+        correct_vehicle_type: feedbackData.correctVehicleType || selectedViolation.vehicle_type || '',
+        notes: [
+          feedbackData.falsePositives ? `False positives: ${feedbackData.falsePositives}` : '',
+          feedbackData.notes,
+        ].filter(Boolean).join(' | '),
+      });
+      setFeedbackSent(true);
+      setFeedbackOpen(false);
+    } catch (err) {
+      console.error('Feedback submit failed:', err);
+    }
+  }, [selectedViolation, feedbackData]);
 
   const rangeStart = (data.page - 1) * 25 + 1;
   const rangeEnd = Math.min(data.page * 25, data.total);
@@ -186,7 +215,7 @@ export default function Violations() {
                     const hasImages = capturedUrl || annotatedUrl;
                     return (
                       <tr key={i} style={{ cursor: hasImages ? 'pointer' : 'default' }}
-                        onClick={() => hasImages && setSelectedViolation(v)}>
+                        onClick={() => hasImages && openViolationModal(v)}>
                         <td>
                           {annotatedUrl ? (
                             <img
@@ -473,6 +502,67 @@ export default function Violations() {
                 </div>
               </div>
             )}
+
+            {/* ── Feedback / Correction Section ── */}
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 16 }}>
+              {feedbackSent ? (
+                <div style={{
+                  padding: '14px 20px', borderRadius: 8,
+                  background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+                  textAlign: 'center',
+                }}>
+                  <span style={{ fontSize: 18, marginRight: 8 }}>✅</span>
+                  <span style={{ color: '#4ade80', fontWeight: 600 }}>Feedback submitted! This will help improve detection accuracy.</span>
+                </div>
+              ) : feedbackOpen ? (
+                <div style={{ background: 'var(--bg-secondary)', padding: 16, borderRadius: 8, border: '1px solid var(--border-default)' }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <MessageSquare size={16} /> Submit Correction for Active Learning
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Correct Plate Number</label>
+                      <input className="form-input form-input-mono" placeholder={selectedViolation.plate}
+                        value={feedbackData.correctPlate}
+                        onChange={e => setFeedbackData(d => ({ ...d, correctPlate: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Correct Vehicle Type</label>
+                      <input className="form-input" placeholder={selectedViolation.vehicle_type || 'Vehicle type'}
+                        value={feedbackData.correctVehicleType}
+                        onChange={e => setFeedbackData(d => ({ ...d, correctVehicleType: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>False Positive Violations (comma-separated)</label>
+                    <input className="form-input" placeholder="e.g. NO_HELMET, FAKE_PLATE"
+                      value={feedbackData.falsePositives}
+                      onChange={e => setFeedbackData(d => ({ ...d, falsePositives: e.target.value }))} />
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Additional Notes</label>
+                    <textarea className="form-input" placeholder="Any other corrections or observations..."
+                      style={{ minHeight: 50 }}
+                      value={feedbackData.notes}
+                      onChange={e => setFeedbackData(d => ({ ...d, notes: e.target.value }))} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button className="btn btn-primary" onClick={handleViolationFeedback}>
+                      ✅ Submit Correction
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => setFeedbackOpen(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-secondary" onClick={() => setFeedbackOpen(true)}
+                  style={{ width: '100%', justifyContent: 'center', padding: '10px 16px' }}>
+                  <MessageSquare size={16} />
+                  📝 Submit Correction for Model Learning
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

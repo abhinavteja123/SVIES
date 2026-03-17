@@ -1,0 +1,5 @@
+path: C:\Users\ABHINAV TEJA\Downloads\DIP\DIP-Project\svies\runs\retrain\dataset
+train: images/train
+val: images/val
+nc: 1
+names: ['object']

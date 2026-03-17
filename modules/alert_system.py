@@ -26,7 +26,7 @@ import numpy as np
 # ── Import config ──
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import (
-    TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM,
+    TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, TWILIO_WHATSAPP_FROM,
     GMAIL_USER, GMAIL_PASSWORD,
     POLICE_EMAIL, POLICE_PHONE, RTO_EMAIL,
     SNAPSHOT_DIR,
@@ -158,6 +158,56 @@ def send_sms_alert(payload: AlertPayload, recipient_phone: str) -> bool:
 
 
 # ══════════════════════════════════════════════════════════
+# WhatsApp Alert (Twilio WhatsApp Business API)
+# ══════════════════════════════════════════════════════════
+
+def send_whatsapp_alert(payload: AlertPayload, recipient_phone: str) -> bool:
+    """Send a WhatsApp alert via Twilio WhatsApp Business API.
+
+    Uses the same Twilio SDK but with 'whatsapp:' prefix on phone numbers.
+    Requires a Twilio WhatsApp sandbox or approved Business number.
+
+    Args:
+        payload: AlertPayload with violation details.
+        recipient_phone: Phone number to send WhatsApp to (E.164 format).
+
+    Returns:
+        True if sent successfully, False on error.
+    """
+    if not TWILIO_SID or not TWILIO_TOKEN or not TWILIO_WHATSAPP_FROM:
+        print("[WARNING] Twilio WhatsApp credentials not configured. WhatsApp not sent.")
+        return False
+
+    wa_body = (
+        f"🚨 *SVIES ALERT [{payload.alert_level}]*\n\n"
+        f"🚗 *Vehicle:* {payload.plate}\n"
+        f"👤 *Owner:* {payload.owner_name}\n"
+        f"⚠️ *Violations:* {', '.join(payload.violations)}\n"
+        f"📊 *Risk Score:* {payload.risk_score}/100\n"
+        f"📍 *Location:* {payload.gps_location or 'N/A'}\n"
+        f"🕐 *Time:* {payload.timestamp_utc}\n\n"
+        f"_This is an automated alert from SVIES._"
+    )
+
+    try:
+        from twilio.rest import Client
+        client = Client(TWILIO_SID, TWILIO_TOKEN)
+        message = client.messages.create(
+            body=wa_body,
+            from_=f"whatsapp:{TWILIO_WHATSAPP_FROM}",
+            to=f"whatsapp:{recipient_phone}",
+        )
+        print(f"[WHATSAPP] Sent to {recipient_phone} | SID: {message.sid}")
+        return True
+    except ImportError:
+        print("[WARNING] Twilio package not installed. WhatsApp not sent.")
+        return False
+    except Exception as e:
+        logger.warning(f"WhatsApp send failed: {e}")
+        return False
+
+
+# ══════════════════════════════════════════════════════════
 # Email Alert (Gmail SMTP)
 # ══════════════════════════════════════════════════════════
 
@@ -250,6 +300,7 @@ def dispatch_alert(payload: AlertPayload, alert_level: str) -> dict[str, Any]:
     result = {
         "sms_sent": False,
         "email_sent": False,
+        "whatsapp_sent": False,
         "recipients": [],
         "alert_level": alert_level,
     }
@@ -277,6 +328,17 @@ def dispatch_alert(payload: AlertPayload, alert_level: str) -> dict[str, Any]:
                 email_ok = send_email_alert(payload, payload.owner_email)
                 result["email_sent"] = result["email_sent"] or email_ok
                 result["recipients"].append(f"Email: {payload.owner_email}")
+
+            # ── WhatsApp to police + owner ──
+            if POLICE_PHONE:
+                wa_ok = send_whatsapp_alert(payload, POLICE_PHONE)
+                result["whatsapp_sent"] = result["whatsapp_sent"] or wa_ok
+                result["recipients"].append(f"WhatsApp: {POLICE_PHONE}")
+
+            if payload.owner_phone:
+                wa_ok = send_whatsapp_alert(payload, payload.owner_phone)
+                result["whatsapp_sent"] = result["whatsapp_sent"] or wa_ok
+                result["recipients"].append(f"WhatsApp: {payload.owner_phone}")
 
         case "MEDIUM":
             # ── Email only to RTO + owner ──

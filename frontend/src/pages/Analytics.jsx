@@ -15,9 +15,10 @@ const LEVEL_COLORS = {
 };
 
 const TOOLTIP_STYLE = {
-  background: '#1a1f35',
-  border: '1px solid #2a3050',
+  background: '#ffffff',
+  border: '1px solid #cbd5e1',
   borderRadius: 8,
+  color: '#0f172a'
 };
 
 export default function Analytics() {
@@ -126,7 +127,7 @@ export default function Analytics() {
           </h3>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={typeData} layout="vertical" margin={{ left: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3050" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis type="number" stroke="#64748b" fontSize={11} />
               <YAxis
                 type="category"
@@ -149,7 +150,7 @@ export default function Analytics() {
           </h3>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={bins}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3050" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="range" stroke="#64748b" fontSize={11} />
               <YAxis stroke="#64748b" fontSize={11} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -170,7 +171,7 @@ export default function Analytics() {
           </h3>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={hourlyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3050" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis
                 dataKey="label"
                 stroke="#64748b"
@@ -194,7 +195,7 @@ export default function Analytics() {
           </h3>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={levelBars}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a3050" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="level" stroke="#64748b" fontSize={12} />
               <YAxis stroke="#64748b" fontSize={11} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />

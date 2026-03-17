@@ -80,13 +80,18 @@ export default function Login() {
 
   return (
     <div className="login-page">
-      <div className="login-card">
-        <div className="login-logo">
-          <Shield size={30} color="white" />
+      <div className="login-card" style={{ maxWidth: '440px', width: '100%', padding: '40px', textAlign: 'center', background: 'var(--bg-surface)' }}>
+        <p style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '12px', letterSpacing: '0.05em' }}>
+          Government of India
+        </p>
+        <div className="login-logo" style={{ margin: '0 auto 16px', background: 'var(--accent-primary)', color: 'white', width: '48px', height: '48px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Shield size={24} />
         </div>
-        <h1 className="login-title">SVIES</h1>
-        <p className="login-subtitle">
-          Smart Vehicle Intelligence &amp; Enforcement System
+        <h1 className="login-title" style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          SVIES System Login
+        </h1>
+        <p className="login-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '32px' }}>
+          Ministry of Road Transport &amp; Highways
         </p>
 
         {error && <div className="login-error">{error}</div>}
@@ -155,18 +160,11 @@ export default function Login() {
         </button>
 
         <p style={{
-          textAlign: 'center', fontSize: '0.68rem', color: 'var(--text-muted)',
-          marginTop: '24px', lineHeight: '1.6', letterSpacing: '0.02em',
+          textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)',
+          marginTop: '32px', lineHeight: '1.6', letterSpacing: '0.02em',
         }}>
-          Authorized personnel only. New accounts are created by system administrators.
-          <br />No self-registration is available.
-        </p>
-
-        <p style={{
-          textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-muted)',
-          marginTop: '16px', letterSpacing: '0.04em', opacity: 0.7,
-        }}>
-          Government of India &mdash; Ministry of Road Transport &amp; Highways
+          Authorized personnel only. Access is logged and monitored.<br/>
+          Contact your network administrator for account issues.
         </p>
       </div>
     </div>

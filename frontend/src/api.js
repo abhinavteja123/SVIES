@@ -6,6 +6,7 @@ export const WS_BASE = API_BASE.replace(/^http/, 'ws');
 export async function getAuthHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   try {
+    await auth.authStateReady();
     const user = auth.currentUser;
     if (user) {
       const token = await user.getIdToken();
@@ -94,9 +95,31 @@ export const api = {
 
   getFeedbackStats: () => fetchJSON('/api/feedback/stats'),
 
+  submitFullImageFeedback: async (data) => {
+    const { file, accuracyRating, missedVehicles, falseDetections, notes, totalDetected } = data;
+    const form = new FormData();
+    if (file) form.append('file', file);
+    form.append('feedback', JSON.stringify({
+      accuracy_rating: accuracyRating || 0,
+      missed_vehicles: missedVehicles || 0,
+      false_detections: falseDetections || 0,
+      notes: notes || '',
+      total_detected: totalDetected || 0,
+    }));
+    return fetchJSON('/api/feedback/full-image', { method: 'POST', body: form });
+  },
+
   triggerRetrain: () => fetchJSON('/api/retrain', { method: 'POST' }),
 
   getModelInfo: () => fetchJSON('/api/model-info'),
+
+  listModels: () => fetchJSON('/api/models/list'),
+
+  setActiveModel: (category, modelName) => fetchJSON('/api/models/set-active', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category, model_name: modelName }),
+  }),
 
   // --- Reports & Exports ---
   generateReport: async (plate, days = 30) => {

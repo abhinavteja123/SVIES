@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Sidebar from './components/Sidebar';
+import TopBar from './components/TopBar';
 
 import Overview from './pages/Overview';
 import LiveDetection from './pages/LiveDetection';
@@ -17,52 +19,60 @@ import VehicleManagement from './pages/VehicleManagement';
 import Login from './pages/Login';
 
 function AuthenticatedLayout() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   return (
     <ProtectedRoute>
-      <Sidebar />
-      <main className="main-content">
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/detect" element={<LiveDetection />} />
-          <Route path="/verify" element={<ImageVerify />} />
-          <Route path="/lookup" element={<VehicleLookup />} />
-          <Route path="/violations" element={<Violations />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/offenders" element={<Offenders />} />
-          <Route
-            path="/zones"
-            element={
-              <ProtectedRoute requiredRole="VIEWER">
-                <ZoneMap />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/learning"
-            element={
-              <ProtectedRoute requiredRole="ADMIN">
-                <ActiveLearning />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/users"
-            element={
-              <ProtectedRoute requiredRole="POLICE">
-                <UserManagement />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/vehicle-management"
-            element={
-              <ProtectedRoute requiredRole="RTO">
-                <VehicleManagement />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </main>
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(prev => !prev)}
+      />
+      <div className={`main-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+        <TopBar />
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<Overview />} />
+            <Route path="/detect" element={<LiveDetection />} />
+            <Route path="/verify" element={<ImageVerify />} />
+            <Route path="/lookup" element={<VehicleLookup />} />
+            <Route path="/violations" element={<Violations />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/offenders" element={<Offenders />} />
+            <Route
+              path="/zones"
+              element={
+                <ProtectedRoute requiredRole="VIEWER">
+                  <ZoneMap />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/learning"
+              element={
+                <ProtectedRoute requiredRole="ADMIN">
+                  <ActiveLearning />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute requiredRole="POLICE">
+                  <UserManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vehicle-management"
+              element={
+                <ProtectedRoute requiredRole="RTO">
+                  <VehicleManagement />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </main>
+      </div>
     </ProtectedRoute>
   );
 }

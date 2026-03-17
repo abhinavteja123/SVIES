@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { api } from '../api';
+import { ImagePlus } from 'lucide-react';
 
 const STEP_STYLES = {
   completed: { bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)', dot: '#22c55e' },
@@ -125,6 +126,9 @@ export default function ImageVerify() {
   const [feedbackOpen, setFeedbackOpen] = useState(null);
   const [feedbackData, setFeedbackData] = useState({ correctPlate: '', correctVehicleType: '', notes: '' });
   const [feedbackSentFor, setFeedbackSentFor] = useState(new Set());
+  const [fullFeedbackOpen, setFullFeedbackOpen] = useState(false);
+  const [fullFeedbackData, setFullFeedbackData] = useState({ accuracyRating: 0, missedVehicles: 0, falseDetections: 0, notes: '' });
+  const [fullFeedbackSent, setFullFeedbackSent] = useState(false);
   const fileRef = useRef(null);
 
   const handleFile = useCallback((f) => {
@@ -133,6 +137,8 @@ export default function ImageVerify() {
     setResult(null);
     setError('');
     setFeedbackSentFor(new Set());
+    setFullFeedbackSent(false);
+    setFullFeedbackOpen(false);
     const reader = new FileReader();
     reader.onload = (e) => setPreview(e.target.result);
     reader.readAsDataURL(f);
@@ -174,6 +180,23 @@ export default function ImageVerify() {
       setError('Failed to submit feedback: ' + err.message);
     }
   }, [file, result, feedbackData]);
+
+  const handleFullImageFeedback = useCallback(async () => {
+    try {
+      await api.submitFullImageFeedback({
+        file,
+        accuracyRating: fullFeedbackData.accuracyRating,
+        missedVehicles: fullFeedbackData.missedVehicles,
+        falseDetections: fullFeedbackData.falseDetections,
+        notes: fullFeedbackData.notes,
+        totalDetected: result?.detections || 0,
+      });
+      setFullFeedbackSent(true);
+      setFullFeedbackOpen(false);
+    } catch (err) {
+      setError('Failed to submit full-image feedback: ' + err.message);
+    }
+  }, [file, result, fullFeedbackData]);
 
   return (
     <div className="page">
@@ -228,7 +251,7 @@ export default function ImageVerify() {
           </div>
         ) : (
           <>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>🖼️</div>
+            <ImagePlus size={48} color="var(--text-muted)" style={{ marginBottom: 16, margin: '0 auto' }} />
             <h3 style={{ marginBottom: 8, color: 'var(--text-primary)' }}>
               Drop an image here or click to browse
             </h3>
@@ -366,6 +389,96 @@ export default function ImageVerify() {
               )}
             </div>
           ))}
+
+          {/* Full Image Feedback Card */}
+          {result.detections > 0 && (
+            <div className="card" style={{ marginBottom: 20, border: '1px solid var(--border-default)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                📋 Full Image Feedback
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
+                Rate the overall accuracy of this scan — help us improve detection quality.
+              </p>
+
+              {fullFeedbackSent ? (
+                <div style={{
+                  padding: '16px 20px', borderRadius: 8,
+                  background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+                  textAlign: 'center',
+                }}>
+                  <span style={{ fontSize: 20, marginRight: 8 }}>✅</span>
+                  <span style={{ color: '#4ade80', fontWeight: 600 }}>Thank you! Full-image feedback submitted successfully.</span>
+                </div>
+              ) : fullFeedbackOpen ? (
+                <div style={{ background: 'var(--bg-secondary)', padding: 16, borderRadius: 8 }}>
+                  {/* Star Rating */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Overall Accuracy</div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button
+                          key={star}
+                          onClick={() => setFullFeedbackData(d => ({ ...d, accuracyRating: star }))}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            fontSize: 28, padding: 2, transition: 'transform 0.15s',
+                            transform: fullFeedbackData.accuracyRating >= star ? 'scale(1.15)' : 'scale(1)',
+                            filter: fullFeedbackData.accuracyRating >= star ? 'none' : 'grayscale(1) opacity(0.4)',
+                          }}
+                          title={`${star} star${star > 1 ? 's' : ''}`}
+                        >
+                          ⭐
+                        </button>
+                      ))}
+                      <span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 13, alignSelf: 'center' }}>
+                        {fullFeedbackData.accuracyRating > 0 ? `${fullFeedbackData.accuracyRating}/5` : 'Select rating'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Missed & False Detections */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                    <div>
+                      <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Missed Vehicles</label>
+                      <input className="input" type="number" min="0" max="20" placeholder="0"
+                        value={fullFeedbackData.missedVehicles || ''}
+                        onChange={e => setFullFeedbackData(d => ({ ...d, missedVehicles: parseInt(e.target.value) || 0 }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>False Detections</label>
+                      <input className="input" type="number" min="0" max="20" placeholder="0"
+                        value={fullFeedbackData.falseDetections || ''}
+                        onChange={e => setFullFeedbackData(d => ({ ...d, falseDetections: parseInt(e.target.value) || 0 }))} />
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <textarea className="input" placeholder="Any other feedback about the scan output..."
+                    style={{ minHeight: 60, marginBottom: 12 }}
+                    value={fullFeedbackData.notes}
+                    onChange={e => setFullFeedbackData(d => ({ ...d, notes: e.target.value }))} />
+
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button className="btn btn-primary" onClick={handleFullImageFeedback}
+                      disabled={fullFeedbackData.accuracyRating === 0}>
+                      ✅ Submit Full-Image Feedback
+                    </button>
+                    <button className="btn btn-outline" onClick={() => setFullFeedbackOpen(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-outline" onClick={() => {
+                  setFullFeedbackOpen(true);
+                  setFullFeedbackData({ accuracyRating: 0, missedVehicles: 0, falseDetections: 0, notes: '' });
+                }}
+                  style={{ fontSize: 13, width: '100%', padding: '10px 16px' }}>
+                  📋 Rate Full Scan Accuracy & Submit Feedback
+                </button>
+              )}
+            </div>
+          )}
 
           {/* No detections */}
           {result.detections === 0 && (

@@ -154,12 +154,163 @@ def get_zone_center(zone_id: str) -> tuple[float, float] | None:
 
 
 def get_all_zones() -> list[dict]:
-    """Get all loaded zone definitions.
+    """Get all loaded zone definitions (manual + cached OSM zones).
 
     Returns:
         List of zone data dicts.
     """
     return _zones.copy()
+
+
+# ══════════════════════════════════════════════════════════
+# OpenStreetMap Dynamic Zone Loading
+# ══════════════════════════════════════════════════════════
+
+# OSM amenity → SVIES zone type mapping
+_OSM_TYPE_MAP: dict[str, str] = {
+    "school":      "SCHOOL",
+    "university":  "SCHOOL",
+    "college":     "SCHOOL",
+    "hospital":    "HOSPITAL",
+    "clinic":      "HOSPITAL",
+    "government":  "GOVT",
+}
+
+
+def fetch_osm_zones(lat: float, lon: float, radius_m: int = 2000) -> list[dict]:
+    """Fetch zones from OpenStreetMap Overpass API near a GPS coordinate.
+
+    Queries for schools, hospitals, and government buildings within a
+    given radius and converts them into SVIES zone format.
+
+    The Overpass API is free and does NOT require an API key.
+
+    Args:
+        lat: Center latitude.
+        lon: Center longitude.
+        radius_m: Search radius in meters (default 2000m = 2km).
+
+    Returns:
+        List of zone dicts in SVIES format (id, name, type, priority, polygon).
+        Returns empty list if network unavailable or on error.
+    """
+    try:
+        import requests
+    except ImportError:
+        logger.warning("requests package not installed. OSM zones not available.")
+        return []
+
+    try:
+        from config import OSM_OVERPASS_URL
+    except ImportError:
+        OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+    # Overpass QL query: find schools, hospitals, government buildings with geometry
+    query = f"""
+    [out:json][timeout:10];
+    (
+      way["amenity"~"school|university|college|hospital|clinic"](around:{radius_m},{lat},{lon});
+      relation["amenity"~"school|university|college|hospital|clinic"](around:{radius_m},{lat},{lon});
+      way["office"="government"](around:{radius_m},{lat},{lon});
+      relation["office"="government"](around:{radius_m},{lat},{lon});
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+
+    try:
+        resp = requests.post(OSM_OVERPASS_URL, data={"data": query}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning(f"OSM Overpass query failed: {e}")
+        return []
+
+    # Build node lookup for resolving way geometries
+    nodes: dict[int, tuple[float, float]] = {}
+    for el in data.get("elements", []):
+        if el.get("type") == "node" and "lat" in el and "lon" in el:
+            nodes[el["id"]] = (el["lon"], el["lat"])
+
+    osm_zones: list[dict] = []
+    existing_ids = {z.get("id", "") for z in _zones}
+
+    for el in data.get("elements", []):
+        if el.get("type") not in ("way", "relation"):
+            continue
+
+        tags = el.get("tags", {})
+        amenity = tags.get("amenity", "")
+        office = tags.get("office", "")
+        name = tags.get("name", tags.get("name:en", f"OSM-{el['id']}"))
+
+        # Determine SVIES zone type
+        zone_type = _OSM_TYPE_MAP.get(amenity) or _OSM_TYPE_MAP.get(office)
+        if not zone_type:
+            continue
+
+        # Build polygon from way nodes
+        polygon_coords: list[list[float]] = []
+        if el.get("type") == "way":
+            for node_id in el.get("nodes", []):
+                if node_id in nodes:
+                    polygon_coords.append(list(nodes[node_id]))
+
+        # Skip if polygon is too small (< 3 points)
+        if len(polygon_coords) < 3:
+            continue
+
+        zone_id = f"osm_{el['id']}"
+        if zone_id in existing_ids:
+            continue
+
+        priority = "HIGH" if zone_type in ("SCHOOL", "HOSPITAL") else "MEDIUM"
+
+        osm_zones.append({
+            "id": zone_id,
+            "name": name,
+            "type": zone_type,
+            "priority": priority,
+            "polygon": polygon_coords,
+            "source": "openstreetmap",
+        })
+
+    logger.info(f"OSM: fetched {len(osm_zones)} zones near ({lat}, {lon})")
+    return osm_zones
+
+
+def load_osm_zones(lat: float, lon: float, radius_m: int = 2000) -> int:
+    """Fetch OSM zones and merge them into the active zone list.
+
+    Manual zones (from zones.json) always take priority.
+    Existing OSM zones with the same ID are not duplicated.
+
+    Args:
+        lat: Center latitude.
+        lon: Center longitude.
+        radius_m: Search radius in meters.
+
+    Returns:
+        Number of new OSM zones added.
+    """
+    global _zones, _zone_polygons
+
+    osm_zones = fetch_osm_zones(lat, lon, radius_m)
+    added = 0
+
+    for zone in osm_zones:
+        coords = zone.get("polygon", [])
+        if len(coords) >= 3:
+            polygon = Polygon(coords)
+            _zones.append(zone)
+            _zone_polygons.append((zone, polygon))
+            added += 1
+
+    if added > 0:
+        logger.info(f"OSM: added {added} new zones to geofence engine")
+
+    return added
 
 
 # ══════════════════════════════════════════════════════════

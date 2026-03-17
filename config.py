@@ -60,6 +60,7 @@ SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
 TWILIO_SID: str = os.getenv("TWILIO_SID", "")
 TWILIO_TOKEN: str = os.getenv("TWILIO_TOKEN", "")
 TWILIO_FROM: str = os.getenv("TWILIO_FROM", "")
+TWILIO_WHATSAPP_FROM: str = os.getenv("TWILIO_WHATSAPP_FROM", "")
 
 # ── Gmail SMTP Configuration ──
 GMAIL_USER: str = os.getenv("GMAIL_USER", "")
@@ -94,6 +95,9 @@ RATE_LIMIT_UPLOAD: str = os.getenv("RATE_LIMIT_UPLOAD", "10/minute")
 # ── Models Directory ──
 MODELS_DIR: Path = PROJECT_ROOT / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── OpenStreetMap Overpass API (free, no API key required) ──
+OSM_OVERPASS_URL: str = os.getenv("OSM_OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 
 # ── Model Versioning ──
 MODEL_VERSION: str = os.getenv("MODEL_VERSION", "v1.0")
