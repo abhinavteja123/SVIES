@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Environment
+.env
+frontend/.env
+venv/
+.venv/
+
+# Firebase credentials
+data/firebase-service-account.json
+
+# Log files
+*.log
+
+# YOLO models (download separately — too large for git)
+*.pt
+
+# Training artifacts
+models/training/
+*.cache
+
+# Downloaded datasets
+Vehicle-Registration-Plates-1/
+data/roboflow/helmets/
+data/roboflow/plates/
+
+# Runtime generated
+data/violations/history.db
+data/feedback/
+snapshots/*.jpg
+snapshots/*.png
+reports/*.txt
+reports/*.pdf
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite-temp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

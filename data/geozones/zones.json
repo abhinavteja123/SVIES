@@ -1,0 +1,172 @@
+{
+    "zones": [
+        {
+            "id": "SCHOOL_JNTU",
+            "name": "JNTU Hyderabad Campus",
+            "type": "SCHOOL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.4900, 17.4935],
+                [78.4958, 17.4935],
+                [78.4958, 17.4880],
+                [78.4900, 17.4880]
+            ]
+        },
+        {
+            "id": "SCHOOL_OU",
+            "name": "Osmania University",
+            "type": "SCHOOL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.5180, 17.4100],
+                [78.5260, 17.4100],
+                [78.5260, 17.4040],
+                [78.5180, 17.4040]
+            ]
+        },
+        {
+            "id": "SCHOOL_UOH",
+            "name": "University of Hyderabad Campus",
+            "type": "SCHOOL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.3310, 17.4610],
+                [78.3410, 17.4610],
+                [78.3410, 17.4530],
+                [78.3310, 17.4530]
+            ]
+        },
+        {
+            "id": "HOSPITAL_NIMS",
+            "name": "NIMS Hospital",
+            "type": "HOSPITAL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.4720, 17.4210],
+                [78.4772, 17.4210],
+                [78.4772, 17.4175],
+                [78.4720, 17.4175]
+            ]
+        },
+        {
+            "id": "HOSPITAL_GANDHI",
+            "name": "Gandhi Hospital",
+            "type": "HOSPITAL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.5020, 17.3950],
+                [78.5070, 17.3950],
+                [78.5070, 17.3910],
+                [78.5020, 17.3910]
+            ]
+        },
+        {
+            "id": "HOSPITAL_KIMS",
+            "name": "KIMS Hospital Secunderabad",
+            "type": "HOSPITAL",
+            "priority": "HIGH",
+            "polygon": [
+                [78.5000, 17.4425],
+                [78.5040, 17.4425],
+                [78.5040, 17.4395],
+                [78.5000, 17.4395]
+            ]
+        },
+        {
+            "id": "GOVT_SECRETARIAT",
+            "name": "Telangana Secretariat",
+            "type": "GOVT",
+            "priority": "HIGH",
+            "polygon": [
+                [78.4710, 17.4110],
+                [78.4770, 17.4110],
+                [78.4770, 17.4060],
+                [78.4710, 17.4060]
+            ]
+        },
+        {
+            "id": "GOVT_COLLECTORATE",
+            "name": "Hyderabad Collectorate",
+            "type": "GOVT",
+            "priority": "MEDIUM",
+            "polygon": [
+                [78.4750, 17.3820],
+                [78.4790, 17.3820],
+                [78.4790, 17.3790],
+                [78.4750, 17.3790]
+            ]
+        },
+        {
+            "id": "HIGHWAY_ORR_GACHIBOWLI",
+            "name": "ORR - Gachibowli Junction",
+            "type": "HIGHWAY",
+            "priority": "HIGH",
+            "polygon": [
+                [78.3400, 17.4450],
+                [78.3560, 17.4450],
+                [78.3560, 17.4380],
+                [78.3400, 17.4380]
+            ]
+        },
+        {
+            "id": "HIGHWAY_ORR_SHAMSHABAD",
+            "name": "ORR - Shamshabad Toll Plaza",
+            "type": "HIGHWAY",
+            "priority": "HIGH",
+            "polygon": [
+                [78.3950, 17.2520],
+                [78.4100, 17.2520],
+                [78.4100, 17.2440],
+                [78.3950, 17.2440]
+            ]
+        },
+        {
+            "id": "HIGHWAY_HITECH_CITY",
+            "name": "Hitech City IT Corridor",
+            "type": "HIGHWAY",
+            "priority": "MEDIUM",
+            "polygon": [
+                [78.3700, 17.4510],
+                [78.3850, 17.4510],
+                [78.3850, 17.4440],
+                [78.3700, 17.4440]
+            ]
+        },
+        {
+            "id": "LOW_EMISSION_CHARMINAR",
+            "name": "Charminar Heritage Zone",
+            "type": "LOW_EMISSION",
+            "priority": "MEDIUM",
+            "polygon": [
+                [78.4700, 17.3630],
+                [78.4790, 17.3630],
+                [78.4790, 17.3560],
+                [78.4700, 17.3560]
+            ]
+        },
+        {
+            "id": "LOW_EMISSION_TANKBUND",
+            "name": "Tank Bund - Hussain Sagar",
+            "type": "LOW_EMISSION",
+            "priority": "MEDIUM",
+            "polygon": [
+                [78.4730, 17.4240],
+                [78.4810, 17.4240],
+                [78.4810, 17.4170],
+                [78.4730, 17.4170]
+            ]
+        },
+        {
+            "id": "LOW_EMISSION_JUBILEE_HILLS",
+            "name": "Jubilee Hills Road No. 36",
+            "type": "LOW_EMISSION",
+            "priority": "LOW",
+            "polygon": [
+                [78.4070, 17.4290],
+                [78.4160, 17.4290],
+                [78.4160, 17.4240],
+                [78.4070, 17.4240]
+            ]
+        }
+    ]
+}
