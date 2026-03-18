@@ -227,6 +227,7 @@ speed_estimator = SpeedEstimator()
 # ── Shared frame buffer for live feed ──
 _latest_frame: str | None = None
 _latest_detections: list[dict] = []
+UNABLE_TO_DETECT_LABEL = "UNABLE_TO_DETECT"
 
 
 def update_live_frame(frame_b64: str, detections: list[dict]) -> None:
@@ -234,6 +235,29 @@ def update_live_frame(frame_b64: str, detections: list[dict]) -> None:
     global _latest_frame, _latest_detections
     _latest_frame = frame_b64
     _latest_detections = detections
+
+
+def _normalize_plate_label(plate: str | None) -> str:
+    """Normalize missing/unknown plate values for UI and logs."""
+    text = (plate or "").strip().upper()
+    return text if text and text != "UNKNOWN" else UNABLE_TO_DETECT_LABEL
+
+
+def _frame_phash_bits(frame: np.ndarray) -> np.ndarray | None:
+    """Compute compact perceptual hash bits for near-duplicate frame filtering."""
+    if frame is None or frame.size == 0:
+        return None
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (16, 16), interpolation=cv2.INTER_AREA)
+    mean_val = float(np.mean(small))
+    return (small > mean_val).astype(np.uint8).flatten()
+
+
+def _hamming_distance_bits(bits_a: np.ndarray | None, bits_b: np.ndarray | None) -> int:
+    """Compute Hamming distance between two bit vectors."""
+    if bits_a is None or bits_b is None or bits_a.shape != bits_b.shape:
+        return 999
+    return int(np.count_nonzero(bits_a != bits_b))
 
 
 # ══════════════════════════════════════════════════════════
@@ -516,11 +540,11 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                     if safety.violation and not safety.helmet_detected:
                         annotated_for_violation = draw_detections(frame, dets)
                         captured_url, annotated_url = _save_violation_images(
-                            frame, annotated_for_violation, "UNKNOWN",
-                            hashlib.sha256(f"UNKNOWN_{det.vehicle_type}".encode()).hexdigest(),
+                            frame, annotated_for_violation, UNABLE_TO_DETECT_LABEL,
+                            hashlib.sha256(f"{UNABLE_TO_DETECT_LABEL}_{det.vehicle_type}".encode()).hexdigest(),
                         )
                         db.log_violation(
-                            plate="UNKNOWN",
+                            plate=UNABLE_TO_DETECT_LABEL,
                             violations=["HELMET_VIOLATION"],
                             risk_score=10,
                             zone_id="",
@@ -730,6 +754,7 @@ def _process_video_worker(video_path: str, loop: asyncio.AbstractEventLoop):
 
         frame_count = 0
         all_records = []
+        last_processed_bits = None
 
         while True:
             ret, frame = cap.read()
@@ -741,6 +766,11 @@ def _process_video_worker(video_path: str, loop: asyncio.AbstractEventLoop):
 
             if frame_count % frame_skip != 0:
                 continue
+
+            frame_bits = _frame_phash_bits(frame)
+            if _hamming_distance_bits(frame_bits, last_processed_bits) <= 6:
+                continue
+            last_processed_bits = frame_bits
 
             try:
                 records, dets = process_frame(frame, camera_id="VIDEO_UPLOAD")
@@ -764,7 +794,7 @@ def _process_video_worker(video_path: str, loop: asyncio.AbstractEventLoop):
                 frame_summary = []
                 for rec in (records or []):
                     frame_summary.append({
-                        "plate": rec.get("plate", "UNKNOWN"),
+                        "plate": _normalize_plate_label(rec.get("plate")),
                         "vehicle_type": rec.get("vehicle_type", "UNKNOWN"),
                         "risk_score": rec.get("risk_score", 0),
                         "alert_level": rec.get("alert_level", "LOW"),
@@ -1520,13 +1550,16 @@ async def _verify_ws_token(websocket: WebSocket) -> bool:
         return True
     token = websocket.query_params.get("token")
     if not token:
+        logger.warning("[WS] No token in query params — rejecting")
         return False
     try:
         if firebase_auth:
-            firebase_auth.verify_id_token(token)
+            firebase_auth.verify_id_token(token, check_revoked=False)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("[WS] Token verification failed: %s: %s", type(exc).__name__, str(exc)[:200])
         return False
+
 
 
 @app.websocket("/ws/live")
@@ -1607,6 +1640,8 @@ async def websocket_live_feed(websocket: WebSocket):
                 })
                 _last_sent_frame = _latest_frame
             await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        pass
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -1926,7 +1961,10 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
     # Maps plate -> timestamp of last violation log.  A plate is only
     # re-logged after PLATE_COOLDOWN_SECS seconds.
     PLATE_COOLDOWN_SECS = 60  # seconds before same plate can be flagged again
+    WEBCAM_PROCESS_EVERY_NTH_FRAME = 4  # trade tiny detection latency for smoother stream
+    OCR_CACHE_TTL_SECS = 1.2            # reuse OCR result for same nearby vehicle region
     _plate_last_logged: dict[str, float] = {}
+    _ocr_cache: dict[str, dict] = {}
 
     try:
         from modules.detector import detect, draw_detections
@@ -1947,8 +1985,12 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        logger.info("Webcam: Camera opened successfully, starting detection loop")
+        logger.info(
+            "Webcam: Camera opened successfully, starting detection loop "
+            f"(process_every={WEBCAM_PROCESS_EVERY_NTH_FRAME}, ocr_cache_ttl={OCR_CACHE_TTL_SECS}s)"
+        )
         frame_count = 0
+        last_processed_bits = None
 
         while _webcam_state["active"]:
             # Drain stale buffered frames — only keep the latest
@@ -1960,14 +2002,23 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
 
             frame_count += 1
 
-            # Process every 3rd frame to keep up with real-time
-            if frame_count % 3 != 0:
+            # Process every Nth frame to keep up with real-time
+            if frame_count % WEBCAM_PROCESS_EVERY_NTH_FRAME != 0:
                 # Still send the raw frame for smooth video
                 _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 frame_b64 = base64.b64encode(buf).decode('utf-8')
                 update_live_frame(frame_b64, [])
                 _time.sleep(0.03)
                 continue
+
+            frame_bits = _frame_phash_bits(frame)
+            if _hamming_distance_bits(frame_bits, last_processed_bits) <= 6:
+                _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                frame_b64 = base64.b64encode(buf).decode('utf-8')
+                update_live_frame(frame_b64, [])
+                _time.sleep(0.03)
+                continue
+            last_processed_bits = frame_bits
 
             try:
                 dets = detect(frame, confidence_threshold=CONFIDENCE_THRESHOLD)
@@ -1976,19 +2027,46 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                 frame_summary = []
                 now = _time.time()
 
+                # Drop stale cache entries to keep memory bounded.
+                if len(_ocr_cache) > 512:
+                    cutoff = now - (OCR_CACHE_TTL_SECS * 2)
+                    stale_keys = [k for k, v in _ocr_cache.items() if v["ts"] < cutoff]
+                    for stale_key in stale_keys:
+                        _ocr_cache.pop(stale_key, None)
+
                 for det in dets:
                     plate_number = None
                     ocr_conf = 0.0
                     verified_by = "none"
 
                     if det.plate_crop is not None:
-                        ocr_result = extract_plate(det.plate_crop, min_confidence=OCR_MIN_CONFIDENCE)
-                        plate_number = ocr_result.plate_number
-                        ocr_conf = ocr_result.confidence
-                        verified_by = ocr_result.verified_by
+                        x1, y1, x2, y2 = det.vehicle_bbox
+                        w = max(1, x2 - x1)
+                        h = max(1, y2 - y1)
+                        cx = x1 + (w // 2)
+                        cy = y1 + (h // 2)
+                        # Bucket by coarse geometry so adjacent frames map to the same key.
+                        ocr_key = f"{det.vehicle_type}:{cx // 40}:{cy // 40}:{w // 40}:{h // 40}"
+                        cached = _ocr_cache.get(ocr_key)
+
+                        if cached and (now - cached["ts"]) <= OCR_CACHE_TTL_SECS:
+                            plate_number = cached["plate_number"]
+                            ocr_conf = cached["confidence"]
+                            verified_by = f"{cached['verified_by']}_cached"
+                        else:
+                            ocr_result = extract_plate(det.plate_crop, min_confidence=OCR_MIN_CONFIDENCE)
+                            plate_number = ocr_result.plate_number
+                            ocr_conf = ocr_result.confidence
+                            verified_by = ocr_result.verified_by
+                            _ocr_cache[ocr_key] = {
+                                "ts": now,
+                                "plate_number": plate_number,
+                                "confidence": ocr_conf,
+                                "verified_by": verified_by,
+                            }
 
                     summary = {
-                        "plate": plate_number or "UNKNOWN",
+                        "plate": _normalize_plate_label(plate_number),
                         "vehicle_type": det.vehicle_type,
                         "risk_score": 0,
                         "alert_level": "LOW",
@@ -2070,13 +2148,13 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                                     "violations": ["HELMET_VIOLATION"],
                                 })
                                 # Log with UNKNOWN plate + save images
-                                plate_key = f"UNKNOWN_{det.vehicle_type}_{int(now)}"
+                                plate_key = f"{UNABLE_TO_DETECT_LABEL}_{det.vehicle_type}_{int(now)}"
                                 captured_url, annotated_url = _save_violation_images(
-                                    frame, annotated, "UNKNOWN",
+                                    frame, annotated, UNABLE_TO_DETECT_LABEL,
                                     hashlib.sha256(plate_key.encode()).hexdigest(),
                                 )
                                 db.log_violation(
-                                    plate="UNKNOWN",
+                                    plate=UNABLE_TO_DETECT_LABEL,
                                     violations=["HELMET_VIOLATION"],
                                     risk_score=10,
                                     zone_id="",
@@ -2087,7 +2165,7 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                                     captured_image=captured_url,
                                     annotated_image=annotated_url,
                                 )
-                                logger.info(f"Webcam: Logged helmet violation for UNKNOWN {det.vehicle_type}")
+                                logger.info(f"Webcam: Logged helmet violation for {UNABLE_TO_DETECT_LABEL} {det.vehicle_type}")
 
                     frame_summary.append(summary)
 

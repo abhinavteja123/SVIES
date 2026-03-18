@@ -32,6 +32,7 @@ _bh_search = re.compile(r'\d{2}BH\d{4}[A-Z]{1,2}')
 
 # ── OCR character whitelist ──
 _CHAR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+UNABLE_TO_DETECT_LABEL = "UNABLE_TO_DETECT"
 
 
 def _get_easyocr_reader():
@@ -481,7 +482,8 @@ def _verify_with_groq(plate_crop: np.ndarray, ocr_text: str) -> tuple[str | None
         "DD=district (2 digits), XX=series (1-3 letters), NNNN=number (1-4 digits)\n"
         "- BH series: NN BH NNNN XX (e.g., 22BH1234AB)\n\n"
         "Read the plate from the image carefully. "
-        "Reply with ONLY the plate number in uppercase, no spaces, no explanation. "
+        "If the plate is unreadable or does not match the Indian formats above, reply with ONLY NONE. "
+        "Reply with ONLY the plate number in uppercase (or NONE), no spaces, no explanation. "
         "Example: TS09EF1234"
     )
 
@@ -512,6 +514,10 @@ def _verify_with_groq(plate_crop: np.ndarray, ocr_text: str) -> tuple[str | None
         groq_text = response.choices[0].message.content.strip()
         # Clean: keep only alphanumeric, uppercase
         groq_plate = re.sub(r'[^A-Za-z0-9]', '', groq_text).upper()
+
+        if groq_plate == "NONE":
+            logger.info("Groq AI: image unreadable -> NONE")
+            return (None, "easyocr")
 
         if not groq_plate or len(groq_plate) < 4:
             logger.warning(f"Groq: response too short or empty: '{groq_text}'")
@@ -562,7 +568,16 @@ def extract_plate(plate_crop: np.ndarray, min_confidence: float = 0.3) -> OCRRes
         if groq_plate:
             groq_validated, groq_fmt = _validate_plate(groq_plate)
             plate_out = groq_validated if groq_validated else groq_plate
-            fmt_out = groq_fmt if groq_validated else "RAW"
+            fmt_out = groq_fmt if groq_validated else UNABLE_TO_DETECT_LABEL
+            if not groq_validated:
+                logger.info("Groq returned non-plate text for empty OCR; marking as UNABLE_TO_DETECT")
+                return OCRResult(
+                    raw_text=groq_plate,
+                    confidence=0.0,
+                    format_type=UNABLE_TO_DETECT_LABEL,
+                    char_bboxes=[],
+                    verified_by=groq_source,
+                )
             logger.info(f"Groq rescued empty OCR: plate='{plate_out}' format={fmt_out}")
             return OCRResult(
                 plate_number=plate_out,
@@ -581,7 +596,8 @@ def extract_plate(plate_crop: np.ndarray, min_confidence: float = 0.3) -> OCRRes
 
     # ── Step 5: Validate ──
     plate_number, format_type = _validate_plate(corrected)
-    logger.info(f"OCR: regex validation -> plate={plate_number}, format={format_type}")
+    log_format = format_type if plate_number else UNABLE_TO_DETECT_LABEL
+    logger.info(f"OCR: regex validation -> plate={plate_number}, format={log_format}")
 
     # ── Step 6: Groq AI verification/correction ──
     verified_by = "easyocr"
@@ -605,13 +621,8 @@ def extract_plate(plate_crop: np.ndarray, min_confidence: float = 0.3) -> OCRRes
                 format_type = groq_fmt
                 verified_by = "groq_corrected"
                 confidence = max(confidence, 0.85)
-        elif not plate_number and len(groq_plate) >= 6:
-            # EasyOCR regex failed but Groq gave something reasonable
-            logger.info(f"Groq provided plate (no regex match): '{groq_plate}'")
-            plate_number = groq_plate
-            format_type = "RAW"
-            verified_by = "groq_corrected"
-            confidence = max(confidence, 0.75)
+        elif not plate_number:
+            logger.info(f"Groq rejected: no valid Indian plate match for '{groq_plate}'")
 
     # ── Step 7: Return result ──
     if plate_number and confidence >= min_confidence:
@@ -624,23 +635,15 @@ def extract_plate(plate_crop: np.ndarray, min_confidence: float = 0.3) -> OCRRes
             char_bboxes=char_bboxes,
             verified_by=verified_by,
         )
-    elif len(corrected) >= 3 and confidence >= min_confidence:
-        logger.info(f"OCR PASS (raw fallback): plate='{corrected}' conf={confidence:.3f} verified_by={verified_by}")
-        return OCRResult(
-            plate_number=corrected,
-            raw_text=raw_text,
-            confidence=confidence,
-            format_type="RAW",
-            char_bboxes=char_bboxes,
-            verified_by=verified_by,
-        )
     else:
-        logger.warning(f"OCR FAIL: corrected='{corrected}' conf={confidence:.3f} verified_by={verified_by}")
+        logger.warning(
+            f"OCR FAIL -> {UNABLE_TO_DETECT_LABEL}: corrected='{corrected}' conf={confidence:.3f} verified_by={verified_by}"
+        )
         return OCRResult(
             plate_number=None,
             raw_text=raw_text,
             confidence=confidence,
-            format_type=format_type,
+            format_type=UNABLE_TO_DETECT_LABEL,
             char_bboxes=char_bboxes,
             verified_by=verified_by,
         )

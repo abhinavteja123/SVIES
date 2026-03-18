@@ -127,26 +127,30 @@ async def get_current_user(
 
     # -- Verify with Firebase --
     try:
-        decoded = firebase_auth.verify_id_token(token)
+        decoded = firebase_auth.verify_id_token(token, check_revoked=False)
     except firebase_auth.ExpiredIdTokenError:
+        logger.warning("Auth: Token expired for request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired. Please re-authenticate.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except firebase_auth.RevokedIdTokenError:
+        logger.warning("Auth: Token revoked")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been revoked. Please re-authenticate.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except firebase_auth.InvalidIdTokenError:
+    except firebase_auth.InvalidIdTokenError as exc:
+        logger.warning("Auth: Invalid token — %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token. Please provide a valid Firebase ID token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except Exception as exc:
+        logger.error("Auth: Token verification failed — %s: %s", type(exc).__name__, exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token verification failed: {exc}",

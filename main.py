@@ -38,6 +38,7 @@ _speed_estimator = SpeedEstimator()
 # ── Violation snapshots directory ──
 _VIOLATION_SNAPSHOTS_DIR = Path(__file__).resolve().parent / "snapshots" / "violations"
 _VIOLATION_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+UNABLE_TO_DETECT_LABEL = "UNABLE_TO_DETECT"
 
 
 def process_frame(frame: np.ndarray, camera_id: str = "CAM_01",
@@ -72,7 +73,7 @@ def process_frame(frame: np.ndarray, camera_id: str = "CAM_01",
             record["ocr_raw"] = ocr_result.raw_text
 
         if plate_number is None:
-            record["plate"] = "UNKNOWN"
+            record["plate"] = UNABLE_TO_DETECT_LABEL
             record["status"] = "PLATE_NOT_RECOGNIZED"
             records.append(record)
             continue

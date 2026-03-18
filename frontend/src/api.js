@@ -3,36 +3,59 @@ import { auth } from './config/firebase';
 export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 export const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
+/* ── Auth helpers ── */
+
 export async function getAuthHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   try {
     await auth.authStateReady();
     const user = auth.currentUser;
     if (user) {
-      const token = await user.getIdToken();
+      const token = await user.getIdToken(); // uses cache, fast
       headers['Authorization'] = `Bearer ${token}`;
     }
-  } catch (err) {
-    console.warn('[API] Failed to get auth token:', err);
-  }
+  } catch (_) { /* user may not be logged in */ }
   return headers;
 }
 
-export async function fetchJSON(endpoint, options = {}) {
+/** Get a FRESH token (force refresh) — used only on 401 retry */
+async function getFreshToken() {
+  try {
+    const user = auth.currentUser;
+    if (user) return await user.getIdToken(true);
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
+/* ── Core fetch with auto-retry on 401 ── */
+
+export async function fetchJSON(endpoint, options = {}, _retried = false) {
   const authHeaders = await getAuthHeaders();
 
-  // Don't override Content-Type for FormData (browser sets multipart boundary)
   if (options.body instanceof FormData) {
     delete authHeaders['Content-Type'];
   }
 
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
-    headers: {
-      ...authHeaders,
-      ...options.headers,
-    },
+    headers: { ...authHeaders, ...options.headers },
   });
+
+  // Auto-retry ONCE on 401 with a fresh token
+  if (res.status === 401 && !_retried) {
+    const freshToken = await getFreshToken();
+    if (freshToken) {
+      const retryHeaders = { ...authHeaders, ...options.headers, Authorization: `Bearer ${freshToken}` };
+      if (options.body instanceof FormData) delete retryHeaders['Content-Type'];
+      const retryRes = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers: retryHeaders,
+      });
+      if (retryRes.ok) return retryRes.json();
+    }
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`API ${res.status}: ${text}`);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -110,9 +133,7 @@ export const api = {
   },
 
   triggerRetrain: () => fetchJSON('/api/retrain', { method: 'POST' }),
-
   getModelInfo: () => fetchJSON('/api/model-info'),
-
   listModels: () => fetchJSON('/api/models/list'),
 
   setActiveModel: (category, modelName) => fetchJSON('/api/models/set-active', {
@@ -226,50 +247,42 @@ export const api = {
     fetchJSON(`/api/vehicles/${encodeURIComponent(plate)}/stolen`, { method: 'PUT', body: JSON.stringify({ stolen }) }),
 };
 
-// --- WebSocket: Detection events ---
+/* ══════════════════════════════════════════════════════════
+   WebSocket: Detection events (silent reconnect)
+   ══════════════════════════════════════════════════════════ */
 export function connectWebSocket(onMessage) {
   let ws = null;
   let cleanup = null;
   let reconnectTimeout = null;
   let closed = false;
+  let retryDelay = 3000;
 
   async function connect() {
     if (closed) return;
-
-    // Clean up previous connection's ping interval before reconnecting
-    if (cleanup) {
-      cleanup();
-      cleanup = null;
-    }
+    if (cleanup) { cleanup(); cleanup = null; }
 
     let tokenParam = '';
     try {
+      await auth.authStateReady();
       const user = auth.currentUser;
       if (user) {
         const token = await user.getIdToken();
         tokenParam = `?token=${encodeURIComponent(token)}`;
       }
-    } catch (err) {
-      console.warn('[WS] Failed to get auth token:', err);
-    }
+    } catch (_) { /* ignore */ }
 
     ws = new WebSocket(`${WS_BASE}/ws/live${tokenParam}`);
 
-    ws.onopen = () => console.log('[WS] Connected');
+    ws.onopen = () => { retryDelay = 3000; };
 
     ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        onMessage(data);
-      } catch (err) {
-        console.error('[WS] Parse error:', err);
-      }
+      try { onMessage(JSON.parse(e.data)); } catch (_) { /* ignore */ }
     };
 
     ws.onclose = () => {
-      console.log('[WS] Disconnected, reconnecting in 3s...');
       if (!closed) {
-        reconnectTimeout = setTimeout(connect, 3000);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        reconnectTimeout = setTimeout(connect, retryDelay);
       }
     };
 
@@ -287,51 +300,45 @@ export function connectWebSocket(onMessage) {
   }
 
   connect();
-
-  return () => {
-    closed = true;
-    if (cleanup) cleanup();
-  };
+  return () => { closed = true; if (cleanup) cleanup(); };
 }
 
-// --- WebSocket: Live camera feed ---
+/* ══════════════════════════════════════════════════════════
+   WebSocket: Live camera feed (silent reconnect)
+   ══════════════════════════════════════════════════════════ */
 export function connectLiveFeed(onFrame) {
   let ws = null;
   let cleanup = null;
   let reconnectTimeout = null;
   let closed = false;
+  let retryDelay = 3000;
 
   async function connect() {
     if (closed) return;
+    if (cleanup) { cleanup(); cleanup = null; }
 
     let tokenParam = '';
     try {
+      await auth.authStateReady();
       const user = auth.currentUser;
       if (user) {
         const token = await user.getIdToken();
         tokenParam = `?token=${encodeURIComponent(token)}`;
       }
-    } catch (err) {
-      console.warn('[WS] Failed to get auth token:', err);
-    }
+    } catch (_) { /* ignore */ }
 
     ws = new WebSocket(`${WS_BASE}/ws/live-feed${tokenParam}`);
 
-    ws.onopen = () => console.log('[WS] Live feed connected');
+    ws.onopen = () => { retryDelay = 3000; };
 
     ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        onFrame(data);
-      } catch (err) {
-        console.error('[WS] Live feed parse error:', err);
-      }
+      try { onFrame(JSON.parse(e.data)); } catch (_) { /* ignore */ }
     };
 
     ws.onclose = () => {
-      console.log('[WS] Live feed disconnected, reconnecting in 3s...');
       if (!closed) {
-        reconnectTimeout = setTimeout(connect, 3000);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        reconnectTimeout = setTimeout(connect, retryDelay);
       }
     };
 
@@ -344,9 +351,5 @@ export function connectLiveFeed(onFrame) {
   }
 
   connect();
-
-  return () => {
-    closed = true;
-    if (cleanup) cleanup();
-  };
+  return () => { closed = true; if (cleanup) cleanup(); };
 }
