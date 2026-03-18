@@ -6,10 +6,11 @@ __pycache__
 node_modules
 frontend/node_modules
 frontend/dist
-Vehicle-Registration-Plates-1
 *.egg-info
 .pytest_cache
 runs/
-yolov8n.pt
-yolov8n-pose.pt
-scripts/SVIES_Model_Training.ipynb
+*.log
+*.md
+!requirements.txt
+.env
+.gemini/
