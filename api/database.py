@@ -76,6 +76,7 @@ class SVIESDatabase:
         model_used: str = "",
         captured_image: str = "",
         annotated_image: str = "",
+        vehicle_age: str = "",
     ) -> str:
         """Log a traffic violation and return its SHA-256 evidence hash."""
         plate = plate.upper().strip()
@@ -96,6 +97,7 @@ class SVIESDatabase:
             "model_used": model_used,
             "captured_image": captured_image,
             "annotated_image": annotated_image,
+            "vehicle_age": vehicle_age,
         }
         self._supabase.table("violations").insert(row).execute()
 
@@ -542,7 +544,7 @@ class LocalSVIESDatabase:
             )
             # Migrate existing tables: add new columns if missing
             existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(violations)").fetchall()}
-            for col in ("vehicle_type", "owner_name", "model_used", "captured_image", "annotated_image"):
+            for col in ("vehicle_type", "owner_name", "model_used", "captured_image", "annotated_image", "vehicle_age"):
                 if col not in existing_cols:
                     cur.execute(f"ALTER TABLE violations ADD COLUMN {col} TEXT DEFAULT ''")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_violations_plate ON violations (plate)")
@@ -580,6 +582,7 @@ class LocalSVIESDatabase:
         model_used: str = "",
         captured_image: str = "",
         annotated_image: str = "",
+        vehicle_age: str = "",
     ) -> str:
         plate = plate.upper().strip()
         ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -590,11 +593,11 @@ class LocalSVIESDatabase:
             conn.execute(
                 """
                 INSERT INTO violations (plate, timestamp, violation_types, risk_score, zone_id, alert_level, sha256_hash,
-                                        vehicle_type, owner_name, model_used, captured_image, annotated_image)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        vehicle_type, owner_name, model_used, captured_image, annotated_image, vehicle_age)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (plate, ts, vt, int(risk_score), zone_id, alert_level, sha,
-                 vehicle_type, owner_name, model_used, captured_image, annotated_image),
+                 vehicle_type, owner_name, model_used, captured_image, annotated_image, vehicle_age),
             )
             conn.commit()
 

@@ -1,17 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import { Settings, CheckCircle, AlertCircle, Cpu, Shield, Camera } from 'lucide-react';
+import { Settings, CheckCircle, AlertCircle, Cpu, Shield, Camera, Clock } from 'lucide-react';
 
 const CATEGORY_ICONS = {
   vehicle: Cpu,
   helmet: Shield,
   plate: Camera,
+  age: Clock,
 };
 
 const CATEGORY_COLORS = {
   vehicle: { bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.25)', text: '#818cf8', badge: '#6366f1' },
   helmet: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.25)', text: '#fbbf24', badge: '#f59e0b' },
   plate: { bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.25)', text: '#4ade80', badge: '#22c55e' },
+  age: { bg: 'rgba(168,85,247,0.08)', border: 'rgba(168,85,247,0.25)', text: '#c084fc', badge: '#a855f7' },
 };
 
 export default function ActiveLearning() {
@@ -81,7 +83,7 @@ export default function ActiveLearning() {
     <div className="page">
       <div className="page-header">
         <h2>Active Learning</h2>
-        <p>Model learns from your corrections — view feedback and trigger retraining</p>
+        <p>Manage SVIES detection models — view feedback, switch model versions, and trigger retraining</p>
       </div>
 
       {/* Stats */}
@@ -108,15 +110,16 @@ export default function ActiveLearning() {
         </div>
       </div>
 
-      {/* ═══════════ Model Version Selector (3 Categories) ═══════════ */}
+      {/* ═══════════ Model Version Selector (4 Categories) ═══════════ */}
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
           <Settings size={18} />
           Model Version Management
         </div>
         <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
-          SVIES uses 3 detection models. Select which version of each model to use across the system.
-          Retrained models are saved as versioned files (v1, v2, v3…).
+          SVIES uses 4 detection models: Vehicle Classifier (YOLO), Helmet Detector (YOLO),
+          Plate Detector (YOLO), and Age Classifier (ResNet50). Select which version of each model
+          to use. Retrained models are saved as versioned files (v1, v2, v3…).
         </p>
 
         {switchMsg && (
@@ -130,7 +133,7 @@ export default function ActiveLearning() {
           </div>
         )}
 
-        {/* 3 Category Sections */}
+        {/* 4 Category Sections */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {Object.entries(_MODEL_CATEGORIES_ORDER).map(([cat, _]) => {
             const catLabel = categories[cat] || cat;
@@ -157,6 +160,7 @@ export default function ActiveLearning() {
                     <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>{catLabel}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                       Active: <code style={{ color: colors.text }}>{activeName}</code>
+                      {cat === 'age' && <span style={{ marginLeft: 8, fontSize: 10, opacity: 0.7 }}>(ResNet50-based)</span>}
                     </div>
                   </div>
                   <span style={{
@@ -353,9 +357,10 @@ export default function ActiveLearning() {
   );
 }
 
-// Category rendering order
+// Category rendering order — matches backend _MODEL_CATEGORIES
 const _MODEL_CATEGORIES_ORDER = {
   vehicle: 'Vehicle Detector',
   helmet: 'Helmet Detector',
   plate: 'Plate Detector',
+  age: 'Age Classifier (ResNet50)',
 };

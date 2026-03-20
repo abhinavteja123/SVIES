@@ -24,7 +24,7 @@ USING_CUSTOM_HELMET = False
 
 
 def _get_custom_helmet_model():
-    """Load custom Roboflow helmet detector if it exists."""
+    """Load custom Roboflow helmet detector if it exists and has useful classes."""
     global _custom_helmet_model, _custom_helmet_checked, USING_CUSTOM_HELMET
     if _custom_helmet_checked:
         return _custom_helmet_model
@@ -35,9 +35,22 @@ def _get_custom_helmet_model():
         custom = models_dir / "svies_helmet_detector.pt"
         if custom.exists():
             logger.info(f"Loading custom helmet detector: {custom}")
-            _custom_helmet_model = YOLO(str(custom))
-            USING_CUSTOM_HELMET = True
-            return _custom_helmet_model
+            model = YOLO(str(custom))
+
+            # Check if model has meaningful helmet-related classes
+            names = model.names if hasattr(model, 'names') else {}
+            name_values = [str(v).lower() for v in names.values()]
+            has_helmet_classes = any("helmet" in n for n in name_values)
+
+            if has_helmet_classes:
+                _custom_helmet_model = model
+                USING_CUSTOM_HELMET = True
+                logger.info(f"  Helmet model classes: {names}")
+                return _custom_helmet_model
+            else:
+                logger.warning(f"  Helmet model only has generic classes {names} — "
+                             "skipping, will use heuristic fallback")
+                return None
     except Exception as e:
         logger.warning(f"Custom helmet model load failed: {e}")
     return None
@@ -72,15 +85,24 @@ class HelmetResult:
     model_used: str = "heuristic"  # "custom" | "heuristic"
 
 
-# ── Skin color HSV range ──
-SKIN_LOWER = np.array([0, 50, 100])
-SKIN_UPPER = np.array([20, 150, 255])
+# ── Skin color HSV ranges (expanded for Indian skin tones) ──
+# Range 1: Lighter Indian skin tones
+SKIN_LOWER_1 = np.array([0, 30, 80])
+SKIN_UPPER_1 = np.array([25, 180, 255])
+# Range 2: Darker Indian skin tones (lower V, higher S)
+SKIN_LOWER_2 = np.array([0, 20, 50])
+SKIN_UPPER_2 = np.array([20, 200, 180])
+# Range 3: Very dark skin (YCrCb space fallback — handled in heuristic)
 
 
 def _check_helmet_heuristic(head_crop: np.ndarray) -> tuple[bool, float]:
     """Heuristic helmet check using HSV skin detection + edge analysis.
 
-    If top 40% of head crop is non-skin AND has strong edges → helmet present.
+    If top 40% of head crop is non-skin AND has strong edges AND
+    has helmet-like dark/colored regions → helmet present.
+    Otherwise (skin visible or low edges) → no helmet.
+
+    Tuned for Indian skin tones across light and dark complexions.
     """
     if head_crop is None or head_crop.size == 0 or head_crop.shape[0] < 10:
         return (False, 0.0)
@@ -90,8 +112,17 @@ def _check_helmet_heuristic(head_crop: np.ndarray) -> tuple[bool, float]:
     if top_region.size == 0:
         return (False, 0.0)
 
+    # ── Multi-range skin detection in HSV ──
     hsv = cv2.cvtColor(top_region, cv2.COLOR_BGR2HSV)
-    skin_mask = cv2.inRange(hsv, SKIN_LOWER, SKIN_UPPER)
+    skin_mask1 = cv2.inRange(hsv, SKIN_LOWER_1, SKIN_UPPER_1)
+    skin_mask2 = cv2.inRange(hsv, SKIN_LOWER_2, SKIN_UPPER_2)
+    skin_mask = skin_mask1 | skin_mask2
+
+    # ── Also detect skin in YCrCb space (better for dark skin) ──
+    ycrcb = cv2.cvtColor(top_region, cv2.COLOR_BGR2YCrCb)
+    skin_ycrcb = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+    skin_mask = skin_mask | skin_ycrcb
+
     total = skin_mask.shape[0] * skin_mask.shape[1]
     if total == 0:
         return (False, 0.0)
@@ -99,12 +130,18 @@ def _check_helmet_heuristic(head_crop: np.ndarray) -> tuple[bool, float]:
     skin_ratio = float(np.count_nonzero(skin_mask)) / total
     non_skin = 1.0 - skin_ratio
 
+    # ── Edge analysis ──
     gray = cv2.cvtColor(top_region, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
     edge_ratio = float(np.count_nonzero(edges)) / total
 
-    helmet_present = non_skin > 0.6 and edge_ratio > 0.05
-    confidence = min(non_skin * 0.7 + edge_ratio * 3.0, 1.0)
+    # ── Helmet detection logic ──
+    # Helmet present: very little skin visible AND significant edges (helmet texture/shape)
+    helmet_present = non_skin > 0.75 and edge_ratio > 0.08
+    confidence = min(non_skin * 0.5 + edge_ratio * 2.5, 1.0)
+
+    logger.info(f"  Helmet heuristic: skin_ratio={skin_ratio:.2f}, non_skin={non_skin:.2f}, "
+                f"edge_ratio={edge_ratio:.3f}, helmet_present={helmet_present}, conf={confidence:.2f}")
 
     return (helmet_present, confidence)
 
@@ -157,6 +194,7 @@ def detect_safety(frame: np.ndarray, vehicle_type: str,
     vtype = vehicle_type.upper()
 
     if vtype in ("MOTORCYCLE", "SCOOTER", "AUTO", "E_RICKSHAW"):
+        logger.info(f"  Safety check for {vtype}: bbox=({x1},{y1},{x2},{y2})")
         vehicle_crop = frame[max(0, y1):min(frame.shape[0], y2),
                             max(0, x1):min(frame.shape[1], x2)]
         if vehicle_crop.size == 0:
@@ -208,22 +246,34 @@ def detect_safety(frame: np.ndarray, vehicle_type: str,
                         kp = r.keypoints.data[0]
                         if len(kp) > 0:
                             hx, hy = int(kp[0][0].item()), int(kp[0][1].item())
-                            sz = 50
+                            sz = 40
                             cy1 = max(0, hy - sz)
-                            cy2 = min(vehicle_crop.shape[0], hy + sz)
+                            cy2 = min(vehicle_crop.shape[0], hy + int(sz * 0.5))
                             cx1 = max(0, hx - sz)
                             cx2 = min(vehicle_crop.shape[1], hx + sz)
                             if cy2 > cy1 and cx2 > cx1:
                                 head_crop = vehicle_crop[cy1:cy2, cx1:cx2]
+                                logger.info(f"  Head crop via pose: ({cx1},{cy1},{cx2},{cy2}), shape={head_crop.shape}")
                             break
             except Exception as e:
                 logger.warning(f"Pose detection error: {e}")
 
         if head_crop is None:
-            h = vehicle_crop.shape[0]
-            head_crop = vehicle_crop[:int(h * 0.3), :]
+            # Motorcycle rider head is typically:
+            # - In the top 20% of bbox height
+            # - In the center 50% of bbox width
+            # This avoids capturing bike body, handlebars, etc.
+            vh, vw = vehicle_crop.shape[:2]
+            head_top = 0
+            head_bottom = int(vh * 0.20)
+            head_left = int(vw * 0.25)
+            head_right = int(vw * 0.75)
+            head_crop = vehicle_crop[head_top:head_bottom, head_left:head_right]
+            logger.info(f"  Head crop via fallback: ({head_left},{head_top},{head_right},{head_bottom}), "
+                        f"shape={head_crop.shape if head_crop.size > 0 else 'empty'}")
 
         helmet, conf = _check_helmet_heuristic(head_crop)
+        logger.info(f"  Helmet result for {vtype}: helmet={helmet}, violation={not helmet}, conf={conf:.2f}")
         return HelmetResult(helmet_detected=helmet, confidence=conf,
                            violation=not helmet, model_used="heuristic")
 

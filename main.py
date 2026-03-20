@@ -58,6 +58,8 @@ def process_frame(frame: np.ndarray, camera_id: str = "CAM_01",
             "camera_id": camera_id,
             "vehicle_type": det.vehicle_type,
             "vehicle_color": det.vehicle_color,
+            "vehicle_age": det.vehicle_age,
+            "age_confidence": det.age_confidence,
             "confidence": det.confidence,
         }
 

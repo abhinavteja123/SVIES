@@ -23,9 +23,29 @@ from typing import Any
 import cv2
 import numpy as np
 
-# ── Import mock DB for VAHAN lookups ──
+# ── Import unified database layer (same as db_intelligence) ──
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from modules.mock_db_loader import lookup_vahan, lookup_pucc, lookup_insurance, is_stolen
+from api.database import db as _db
+
+
+def lookup_vahan(plate: str):
+    """Look up vehicle in unified database (Supabase or local SQLite)."""
+    return _db.lookup_vehicle(plate)
+
+
+def lookup_pucc(plate: str):
+    """Look up PUCC in unified database."""
+    return _db.lookup_pucc(plate)
+
+
+def lookup_insurance(plate: str):
+    """Look up insurance in unified database."""
+    return _db.lookup_insurance(plate)
+
+
+def is_stolen(plate: str) -> bool:
+    """Check if vehicle is stolen in unified database."""
+    return _db.is_stolen(plate)
 
 
 # ══════════════════════════════════════════════════════════

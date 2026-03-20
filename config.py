@@ -111,6 +111,7 @@ ROBOFLOW_API_KEY: str = os.getenv("ROBOFLOW_API_KEY", "")
 PLATE_MODEL_PATH: Path = MODELS_DIR / "svies_plate_detector.pt"
 HELMET_MODEL_PATH: Path = MODELS_DIR / "svies_helmet_detector.pt"
 INDIAN_VEHICLE_MODEL_PATH: Path = MODELS_DIR / "svies_vehicle_classifier.pt"
+AGE_CLASSIFIER_PATH: Path = MODELS_DIR / "svies_age_classifier.pt"
 
 # ── Indian Vehicle Types ──
 # All vehicle types recognized on Indian roads

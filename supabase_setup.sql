@@ -175,4 +175,5 @@ ALTER TABLE violations ADD COLUMN IF NOT EXISTS owner_name      TEXT DEFAULT '';
 ALTER TABLE violations ADD COLUMN IF NOT EXISTS model_used      TEXT DEFAULT '';
 ALTER TABLE violations ADD COLUMN IF NOT EXISTS captured_image  TEXT DEFAULT '';
 ALTER TABLE violations ADD COLUMN IF NOT EXISTS annotated_image TEXT DEFAULT '';
+ALTER TABLE violations ADD COLUMN IF NOT EXISTS vehicle_age     TEXT DEFAULT '';
 -- adding the new columns --

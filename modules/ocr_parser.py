@@ -25,9 +25,9 @@ logger = logging.getLogger("svies.ocr")
 # ── Lazy-load OCR engines (they are slow to initialize) ──
 _easyocr_reader = None
 _groq_client = None
-_plate_regex = re.compile(r'^[A-Z]{2}\d{2}[A-Z]{1,3}\d{1,4}$')
+_plate_regex = re.compile(r'^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{1,4}$')
 _bh_regex = re.compile(r'^\d{2}BH\d{4}[A-Z]{1,2}$')
-_plate_search = re.compile(r'[A-Z]{2}\d{2}[A-Z]{1,3}\d{1,4}')
+_plate_search = re.compile(r'[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{1,4}')
 _bh_search = re.compile(r'\d{2}BH\d{4}[A-Z]{1,2}')
 
 # ── OCR character whitelist ──

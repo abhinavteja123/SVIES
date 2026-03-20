@@ -454,12 +454,27 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                 "color": d.vehicle_color,
                 "confidence": round(d.confidence * 100, 1),
                 "bbox": list(d.vehicle_bbox) if d.vehicle_bbox else None,
+                "vehicle_age": d.vehicle_age,
+                "age_confidence": round(d.age_confidence * 100, 1),
             })
 
         pipeline_results = []
+        used_plates_server: set[int] = set()  # Track plate bbox indices already assigned
+        assigned_plate_numbers: set[str] = set()  # Track plate numbers already read (prevent duplicates)
 
         for idx, det in enumerate(dets):
-            vehicle_pipeline = {"vehicle_index": idx, "vehicle_type": det.vehicle_type, "steps": []}
+            vehicle_pipeline = {"vehicle_index": idx, "vehicle_type": det.vehicle_type, "vehicle_age": det.vehicle_age, "steps": []}
+
+            # ── Age Classification step (ResNet50) ──
+            age_status = "completed" if det.vehicle_age != "UNKNOWN" else "warning"
+            vehicle_pipeline["steps"].append({
+                "name": "Vehicle Age Classification (ResNet50)",
+                "icon": "🕐",
+                "status": age_status,
+                "detail": f"Estimated Age: {det.vehicle_age}" + (f" (confidence: {det.age_confidence:.0%})" if det.age_confidence > 0 else ""),
+                "age_category": det.vehicle_age,
+                "age_confidence": round(det.age_confidence * 100, 1),
+            })
 
             plate_number = None
             ocr_conf = 0
@@ -475,12 +490,13 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                 plate_b64 = base64.b64encode(pbuf).decode('utf-8')
                 vehicle_pipeline["plate_crop"] = f"data:image/jpeg;base64,{plate_b64}"
 
-            # Fallback: if OCR failed, try ALL detected plates from full frame (not just vehicle-matched)
+            # Fallback: if OCR failed on initial crop, try re-matching with plate detector
+            # Only match plates that overlap with THIS vehicle — never try unrelated plates
             if not plate_number:
                 all_plates = _detect_all_plates(frame, conf_threshold=0.25)
-                # First try vehicle-matched plate
+                # Try vehicle-matched plate (exclusive — won't reuse already-assigned plates)
                 if det.vehicle_bbox is not None:
-                    refined_bbox, refined_crop = _match_plate_to_vehicle(frame, det.vehicle_bbox, all_plates)
+                    refined_bbox, refined_crop = _match_plate_to_vehicle(frame, det.vehicle_bbox, all_plates, used_plates_server)
                     if refined_crop is not None:
                         ocr_result = extract_plate(refined_crop, min_confidence=OCR_MIN_CONFIDENCE)
                         plate_number = ocr_result.plate_number
@@ -490,27 +506,37 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                             _, pbuf = cv2.imencode('.jpg', refined_crop)
                             plate_b64 = base64.b64encode(pbuf).decode('utf-8')
                             vehicle_pipeline["plate_crop"] = f"data:image/jpeg;base64,{plate_b64}"
-                # If still no plate, try OCR on every detected plate crop (notebook approach)
-                if not plate_number and all_plates:
-                    h, w = frame.shape[:2]
-                    for (px1, py1, px2, py2), pconf in sorted(all_plates, key=lambda p: -p[1]):
-                        pad = 10
-                        cx1 = max(0, px1 - pad)
-                        cy1 = max(0, py1 - pad)
-                        cx2 = min(w, px2 + pad)
-                        cy2 = min(h, py2 + pad)
-                        if cx2 - cx1 < 10 or cy2 - cy1 < 5:
-                            continue
-                        plate_crop_fb = frame[cy1:cy2, cx1:cx2].copy()
-                        ocr_result = extract_plate(plate_crop_fb, min_confidence=OCR_MIN_CONFIDENCE)
-                        if ocr_result.plate_number:
+
+            # Fallback: ResNet50 plate detection if YOLO and heuristic both failed
+            if not plate_number and det.vehicle_bbox is not None:
+                try:
+                    from modules.plate_detector_resnet import detect_plate_resnet
+                    vx1, vy1, vx2, vy2 = det.vehicle_bbox
+                    v_crop = frame[max(0, vy1):min(frame.shape[0], vy2),
+                                   max(0, vx1):min(frame.shape[1], vx2)]
+                    if v_crop.size > 0:
+                        resnet_bbox, resnet_crop = detect_plate_resnet(v_crop)
+                        if resnet_crop is not None:
+                            ocr_result = extract_plate(resnet_crop, min_confidence=OCR_MIN_CONFIDENCE)
                             plate_number = ocr_result.plate_number
                             ocr_conf = ocr_result.confidence
                             ocr_raw = ocr_result.raw_text
-                            _, pbuf = cv2.imencode('.jpg', plate_crop_fb)
-                            plate_b64 = base64.b64encode(pbuf).decode('utf-8')
-                            vehicle_pipeline["plate_crop"] = f"data:image/jpeg;base64,{plate_b64}"
-                            break
+                            if plate_number:
+                                _, pbuf = cv2.imencode('.jpg', resnet_crop)
+                                plate_b64 = base64.b64encode(pbuf).decode('utf-8')
+                                vehicle_pipeline["plate_crop"] = f"data:image/jpeg;base64,{plate_b64}"
+                                logger.info(f"  Vehicle {idx}: ResNet50 plate fallback found plate '{plate_number}'")
+                except Exception as e:
+                    logger.warning(f"  Vehicle {idx}: ResNet50 plate fallback error: {e}")
+
+            # Prevent duplicate plate assignment — if another vehicle already got this plate, clear it
+            if plate_number and plate_number in assigned_plate_numbers:
+                logger.info(f"  Vehicle {idx}: plate {plate_number} already assigned to another vehicle, skipping")
+                plate_number = None
+                ocr_conf = 0
+                ocr_raw = ""
+            elif plate_number:
+                assigned_plate_numbers.add(plate_number)
 
             vehicle_pipeline["steps"].append({
                 "name": "OCR / Plate Reading",
@@ -554,6 +580,7 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                             model_used=safety.model_used,
                             captured_image=captured_url,
                             annotated_image=annotated_url,
+                            vehicle_age=det.vehicle_age,
                         )
                         vehicle_pipeline["steps"].append({
                             "name": "Violation Logged (No Plate)",
@@ -616,8 +643,10 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
             risk = calculate_risk(
                 db_result=db_intel,
                 fake_plate_result=fake_result,
-                helmet_violation=(safety.violation and not safety.helmet_detected),
-                seatbelt_violation=(safety.violation and not safety.seatbelt_detected),
+                # Use 'is False' to only flag when explicitly checked and not detected
+                # (None means not applicable for that vehicle type)
+                helmet_violation=(safety.helmet_detected is False),
+                seatbelt_violation=(safety.seatbelt_detected is False),
                 in_blacklist_zone=False,
                 offender_level=offender_level,
                 zone_multiplier=1.0,
@@ -652,6 +681,7 @@ async def process_image(request: Request, file: UploadFile = File(...), user: di
                     model_used=safety.model_used if safety.violation else "yolo",
                     captured_image=captured_url,
                     annotated_image=annotated_url,
+                    vehicle_age=det.vehicle_age,
                 )
                 vehicle_pipeline["steps"].append({
                     "name": "Violation Logged & Alert",
@@ -796,6 +826,8 @@ def _process_video_worker(video_path: str, loop: asyncio.AbstractEventLoop):
                     frame_summary.append({
                         "plate": _normalize_plate_label(rec.get("plate")),
                         "vehicle_type": rec.get("vehicle_type", "UNKNOWN"),
+                        "vehicle_age": rec.get("vehicle_age", "UNKNOWN"),
+                        "age_confidence": rec.get("age_confidence", 0),
                         "risk_score": rec.get("risk_score", 0),
                         "alert_level": rec.get("alert_level", "LOW"),
                         "violations": rec.get("all_violations", []),
@@ -1129,12 +1161,20 @@ _MODEL_CATEGORIES = {
         "detector_attr": "_plate_model",
         "detector_flag": None,
     },
+    "age": {
+        "label": "Age Classifier (ResNet50)",
+        "default": "svies_age_classifier.pt",
+        "prefix": "svies_age_classifier",
+        "detector_attr": "_age_model",
+        "detector_flag": "_age_model_checked",
+    },
 }
 
 _active_models: dict[str, str | None] = {
     "vehicle": None,  # None = use default
     "helmet": None,
     "plate": None,
+    "age": None,
 }
 
 
@@ -1145,6 +1185,8 @@ def _categorize_model(filename: str) -> str:
         return "helmet"
     if "plate" in name:
         return "plate"
+    if "age" in name:
+        return "age"
     if "vehicle" in name or "classifier" in name:
         return "vehicle"
     return "vehicle"  # fallback
@@ -1250,7 +1292,7 @@ async def set_active_model(request: Request, user: dict = Depends(require_admin)
 
     if category not in _MODEL_CATEGORIES:
         return JSONResponse(status_code=400, content={
-            "error": f"Invalid category '{category}'. Use: vehicle, helmet, or plate"
+            "error": f"Invalid category '{category}'. Use: vehicle, helmet, plate, or age"
         })
 
     if not model_name:
@@ -2021,7 +2063,9 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
             last_processed_bits = frame_bits
 
             try:
-                dets = detect(frame, confidence_threshold=CONFIDENCE_THRESHOLD)
+                # Use lower confidence for webcam (noisier, lower resolution)
+                webcam_conf = max(0.25, CONFIDENCE_THRESHOLD - 0.15)
+                dets = detect(frame, confidence_threshold=webcam_conf)
                 annotated = draw_detections(frame, dets)
 
                 frame_summary = []
@@ -2068,6 +2112,8 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                     summary = {
                         "plate": _normalize_plate_label(plate_number),
                         "vehicle_type": det.vehicle_type,
+                        "vehicle_age": det.vehicle_age,
+                        "age_confidence": round(det.age_confidence * 100, 1),
                         "risk_score": 0,
                         "alert_level": "LOW",
                         "violations": [],
@@ -2089,8 +2135,10 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                         risk = calc_risk(
                             db_result=db_intel,
                             fake_plate_result=fake_result,
-                            helmet_violation=(safety.violation and not safety.helmet_detected),
-                            seatbelt_violation=(safety.violation and not safety.seatbelt_detected),
+                            # Use 'is False' to only flag when explicitly checked and not detected
+                            # (None means not applicable for that vehicle type)
+                            helmet_violation=(safety.helmet_detected is False),
+                            seatbelt_violation=(safety.seatbelt_detected is False),
                             in_blacklist_zone=False,
                             offender_level=offender_level,
                             zone_multiplier=1.0,
@@ -2126,6 +2174,7 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                                 model_used=safety.model_used if safety.violation else "yolo",
                                 captured_image=captured_url,
                                 annotated_image=annotated_url,
+                                vehicle_age=det.vehicle_age,
                             )
                             _plate_last_logged[plate_key] = now
                             logger.info(f"Webcam: Logged violation for {plate_key} (cooldown {PLATE_COOLDOWN_SECS}s)")
@@ -2164,6 +2213,7 @@ def _webcam_worker(loop: asyncio.AbstractEventLoop):
                                     model_used=safety.model_used,
                                     captured_image=captured_url,
                                     annotated_image=annotated_url,
+                                    vehicle_age=det.vehicle_age,
                                 )
                                 logger.info(f"Webcam: Logged helmet violation for {UNABLE_TO_DETECT_LABEL} {det.vehicle_type}")
 
