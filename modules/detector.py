@@ -191,14 +191,14 @@ def classify_color(crop: np.ndarray) -> str:
 
 
 # ══════════════════════════════════════════════════════════
-# Auto-Rickshaw Size Heuristic
+# Vehicle Size Heuristic Classification
 # ══════════════════════════════════════════════════════════
 
 def _classify_by_size(bbox: tuple[int, int, int, int], frame_shape: tuple) -> str:
-    """Classify a detected vehicle as AUTO/TEMPO/E_RICKSHAW based on size heuristics.
+    """Classify a detected vehicle based on size and aspect ratio heuristics.
 
-    Indian road-specific: auto-rickshaws, tempos, and e-rickshaws are common
-    but not in standard COCO classes. Use size and aspect ratio to differentiate.
+    Indian road-specific: Uses area ratio (vehicle size relative to frame) as
+    primary differentiator since motorcycles are consistently smaller than cars.
 
     Args:
         bbox: (x1, y1, x2, y2) of the detected vehicle.
@@ -210,18 +210,78 @@ def _classify_by_size(bbox: tuple[int, int, int, int], frame_shape: tuple) -> st
     x1, y1, x2, y2 = bbox
     w = x2 - x1
     h = y2 - y1
-    aspect = w / max(h, 1)
+    aspect = w / max(h, 1)  # width/height ratio
     area_ratio = (w * h) / (frame_shape[0] * frame_shape[1])
 
-    # Auto-rickshaws: medium-sized, roughly square-ish aspect ratio
-    if 0.01 < area_ratio < 0.10 and 0.6 < aspect < 1.5:
+    logger.debug(f"_classify_by_size: bbox={bbox}, aspect={aspect:.2f}, area_ratio={area_ratio:.4f}")
+
+    # === MOTORCYCLES / SCOOTERS ===
+    # Key insight: Motorcycles are SMALLER than cars regardless of aspect ratio
+    # On Indian roads, motorcycles with riders have varying aspect ratios (0.5 - 1.5)
+    # depending on viewing angle (front, rear, side)
+
+    # Small vehicles (< 12% of frame area) are likely motorcycles/scooters
+    if area_ratio < 0.12:
+        # Very narrow (front/rear view with rider) - definitely motorcycle
+        if aspect < 0.8:
+            logger.debug(f"  -> MOTORCYCLE (narrow, aspect={aspect:.2f})")
+            return "MOTORCYCLE"
+        # Medium aspect (angled view) - still likely motorcycle if small
+        if aspect < 1.5 and area_ratio < 0.08:
+            logger.debug(f"  -> MOTORCYCLE (small area, aspect={aspect:.2f})")
+            return "MOTORCYCLE"
+        # Wider but still small - could be motorcycle side view
+        if aspect < 1.8 and area_ratio < 0.05:
+            logger.debug(f"  -> MOTORCYCLE (very small, side view)")
+            return "MOTORCYCLE"
+
+    # === LARGE VEHICLES ===
+    # Buses and Trucks: Large area, typically wide
+    if area_ratio > 0.15:
+        if aspect > 1.5:
+            logger.debug(f"  -> BUS (large, wide)")
+            return "BUS"
+        if aspect > 1.2:
+            logger.debug(f"  -> TRUCK (large)")
+            return "TRUCK"
+
+    # === CARS ===
+    # Medium-large vehicles with wider aspect ratio
+    if area_ratio > 0.08 and aspect > 1.0:
+        logger.debug(f"  -> CAR (medium-large, wide)")
+        return "CAR"
+
+    # === AUTO-RICKSHAWS ===
+    # Medium sized, roughly square aspect ratio
+    if 0.03 < area_ratio < 0.12 and 0.7 < aspect < 1.4:
+        logger.debug(f"  -> AUTO (medium, square-ish)")
         return "AUTO"
-    # Tempos / small commercial: slightly larger than autos
+
+    # === TEMPOS ===
+    # Slightly larger than autos, more rectangular
     if 0.10 <= area_ratio < 0.18 and 0.8 < aspect < 2.0:
+        logger.debug(f"  -> TEMPO")
         return "TEMPO"
-    # E-rickshaws: similar size to autos but squarer
-    if 0.008 < area_ratio < 0.08 and 0.7 < aspect < 1.3:
+
+    # === E-RICKSHAWS ===
+    # Similar size to autos but squarer profile
+    if 0.02 < area_ratio < 0.10 and 0.6 < aspect < 1.2:
+        logger.debug(f"  -> E_RICKSHAW")
         return "E_RICKSHAW"
+
+    # === FALLBACK ===
+    # If nothing matches but vehicle is small, assume motorcycle
+    # (common on Indian roads)
+    if area_ratio < 0.10:
+        logger.debug(f"  -> MOTORCYCLE (fallback for small vehicle)")
+        return "MOTORCYCLE"
+
+    # Medium-large unknown - default to CAR
+    if area_ratio >= 0.10:
+        logger.debug(f"  -> CAR (fallback for medium-large)")
+        return "CAR"
+
+    logger.debug(f"  -> UNKNOWN")
     return "UNKNOWN"
 
 
@@ -513,29 +573,41 @@ def _match_plate_to_vehicle(frame: np.ndarray, vehicle_bbox: tuple[int, int, int
 
 
 def _get_coco_vehicle_type(model, frame: np.ndarray, bbox: tuple[int, int, int, int],
-                            conf_threshold: float = 0.3) -> str | None:
+                            conf_threshold: float = 0.15) -> str | None:
     """Use COCO YOLOv8n to classify what vehicle type is in a given bbox region.
 
     Runs COCO model on the vehicle crop and returns the best matching
     vehicle type, or None if no vehicle class is detected.
+
+    Note: Lower confidence threshold (0.15) helps catch motorcycles which often
+    have lower detection confidence than cars/trucks.
     """
     x1, y1, x2, y2 = bbox
-    # Expand crop slightly for better classification context
     h, w = frame.shape[:2]
-    pad = 20
-    cx1 = max(0, x1 - pad)
-    cy1 = max(0, y1 - pad)
-    cx2 = min(w, x2 + pad)
-    cy2 = min(h, y2 + pad)
+
+    # Expand crop significantly for better classification context
+    # Motorcycles especially need surrounding context for proper detection
+    bbox_w = x2 - x1
+    bbox_h = y2 - y1
+    pad_x = max(40, int(bbox_w * 0.3))  # At least 30% expansion or 40px
+    pad_y = max(40, int(bbox_h * 0.3))
+
+    cx1 = max(0, x1 - pad_x)
+    cy1 = max(0, y1 - pad_y)
+    cx2 = min(w, x2 + pad_x)
+    cy2 = min(h, y2 + pad_y)
     crop = frame[cy1:cy2, cx1:cx2]
 
     if crop.size == 0:
+        logger.debug(f"_get_coco_vehicle_type: empty crop for bbox {bbox}")
         return None
 
     try:
+        # Run COCO model on expanded crop
         results = model(crop, verbose=False, conf=conf_threshold)
         best_type = None
         best_conf = 0.0
+
         for result in results:
             boxes = result.boxes
             if boxes is None:
@@ -546,6 +618,11 @@ def _get_coco_vehicle_type(model, frame: np.ndarray, bbox: tuple[int, int, int, 
                 if cls_id in VEHICLE_CLASSES and conf > best_conf:
                     best_conf = conf
                     best_type = VEHICLE_CLASSES[cls_id]
+                    logger.debug(f"_get_coco_vehicle_type: found {best_type} with conf={conf:.2f}")
+
+        if best_type is None:
+            logger.debug(f"_get_coco_vehicle_type: no vehicle class found in crop")
+
         return best_type
     except Exception as e:
         logger.warning(f"COCO vehicle classification error: {e}")
@@ -596,10 +673,12 @@ def detect(frame: np.ndarray, confidence_threshold: float = 0.5) -> list[Detecti
     indian_detections: list[DetectionResult] = []
     can_classify = _has_real_vehicle_classes(indian_model)
 
-    # If Indian model only has generic classes (e.g. 'object'), it can still
-    # localize vehicles — we just use COCO for classification via _get_coco_vehicle_type()
-    if not can_classify and _indian_vehicle_model is not None:
-        logger.info("detect(): Indian model has generic classes — using it for localization, COCO for classification")
+    # IMPORTANT: If Indian model only has generic classes (e.g. 'object'),
+    # skip it entirely and use COCO on the full frame instead.
+    # COCO on full frame gives proper vehicle types with accurate confidence.
+    if not can_classify:
+        logger.info("detect(): Indian model has generic classes — using COCO full-frame detection instead")
+        indian_model = None  # Force COCO fallback path
 
     if indian_model is not None:
         try:
@@ -622,16 +701,15 @@ def detect(frame: np.ndarray, confidence_threshold: float = 0.5) -> list[Detecti
                     if can_classify:
                         # Model has real vehicle classes — use them directly
                         cls_name = model_names.get(cls_id, "").upper().replace("-", "_").replace(" ", "_")
-                        vtype = cls_name if cls_name in INDIAN_VEHICLE_TYPES else "CAR"
+                        vtype = cls_name if cls_name in INDIAN_VEHICLE_TYPES else "UNKNOWN"
                     else:
                         # Model only detects objects — use COCO YOLOv8n to classify
+                        # Use low threshold (0.15) to catch motorcycles better
                         vtype = _get_coco_vehicle_type(model, frame, (x1, y1, x2, y2))
                         if vtype is None:
-                            # Size-based fallback for Indian vehicle types
+                            # Size-based fallback for Indian vehicle types (including motorcycles)
                             vtype = _classify_by_size((x1, y1, x2, y2), frame.shape)
-                            if vtype == "UNKNOWN":
-                                vtype = "CAR"
-                        logger.info(f"  COCO classified vehicle at ({x1},{y1},{x2},{y2}) as {vtype}")
+                        logger.info(f"  Vehicle at ({x1},{y1},{x2},{y2}) classified as {vtype}")
 
                     vehicle_crop = frame[max(0, y1):min(frame.shape[0], y2),
                                          max(0, x1):min(frame.shape[1], x2)]
@@ -738,8 +816,7 @@ def detect(frame: np.ndarray, confidence_threshold: float = 0.5) -> list[Detecti
                     vehicle_type = cls_name.upper()
                     if vehicle_type == "VEHICLE":
                         vehicle_type = _classify_by_size((x1, y1, x2, y2), frame.shape)
-                        if vehicle_type == "UNKNOWN":
-                            vehicle_type = "CAR"  # Default for custom model
+                        # Keep UNKNOWN if size heuristics don't match - don't force CAR
 
                     vehicle_crop = frame[max(0, y1):min(frame.shape[0], y2),
                                          max(0, x1):min(frame.shape[1], x2)]

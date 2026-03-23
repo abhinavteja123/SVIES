@@ -79,7 +79,8 @@ SNAPSHOT_DIR: Path = PROJECT_ROOT / os.getenv("SNAPSHOT_DIR", "snapshots")
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Detection Thresholds ──
-CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
+# Lower threshold (0.35) helps catch motorcycles and two-wheelers which often have lower confidence
+CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.35"))
 OCR_MIN_CONFIDENCE: float = float(os.getenv("OCR_MIN_CONFIDENCE", "0.3"))
 
 # ── Regex Patterns for Indian License Plates ──
