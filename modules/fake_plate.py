@@ -622,25 +622,48 @@ def check_fake_plate(
     if result_insurance["flagged"]:
         flags.append("INSURANCE_INVALID")
 
-    # ── Aggregate result with improved confidence ──
-    # NEW LOGIC: Higher confidence if multiple checks fail, especially critical ones
-    is_fake = len(flags) > 0
+    # ── Aggregate result ──
+    # A plate is only "FAKE" when genuine forgery signals are present.
+    # PUCC_INVALID / INSURANCE_INVALID are compliance violations, NOT
+    # fake-plate indicators — they belong in the violation log, not here.
+    FORGERY_FLAGS = {
+        "STOLEN_VEHICLE",
+        "VAHAN_NOT_EXISTS",
+        "TYPE_MISMATCH",
+        "COLOR_CODE_VIOLATION",
+        "FONT_ANOMALY",
+        "DUPLICATE_PLATE_CLONE",
+        "STATE_MISMATCH",
+    }
+    COMPLIANCE_FLAGS = {"PUCC_INVALID", "INSURANCE_INVALID"}
 
-    # Calculate confidence based on flags and severity
-    confidence = 0.0
-    if is_fake:
-        # Each flag contributes to confidence, with critical flags weighted heavily
-        confidence_numerator = sum(
-            severity_weights.get(details.get(flag.replace("_NOT_EXISTS", ""), {}).get("severity", "LOW"), 1)
-            for flag in flags
-        )
-        # Max confidence: 8 checks total, but critical ones can push it higher
-        # STOLEN = 3, VAHAN_NOT_EXISTS = 2, others = 1 each
-        confidence = min(1.0, confidence_numerator / 5.0)  # Normalize to 0-1 range
+    forgery_flags_present = [f for f in flags if f in FORGERY_FLAGS]
+    compliance_flags_present = [f for f in flags if f in COMPLIANCE_FLAGS]
+
+    # VAHAN_NOT_EXISTS alone is suspicious but not conclusive — require at
+    # least one more structural signal before declaring fake.
+    if forgery_flags_present == ["VAHAN_NOT_EXISTS"]:
+        # Only VAHAN missing: could be a new / recently registered vehicle
+        # whose entry hasn't reached our local DB yet. Flag but low confidence.
+        is_fake = True
+        confidence = 0.15
+    elif len(forgery_flags_present) >= 2:
+        is_fake = True
+        confidence = min(1.0, len(forgery_flags_present) * 0.20)
+    elif "STOLEN_VEHICLE" in forgery_flags_present:
+        is_fake = True
+        confidence = 0.95
+    elif len(forgery_flags_present) == 1 and forgery_flags_present[0] != "VAHAN_NOT_EXISTS":
+        # Single structural signal (e.g. TYPE_MISMATCH, DUPLICATE_PLATE_CLONE)
+        is_fake = True
+        confidence = 0.35
+    else:
+        is_fake = False
+        confidence = 0.0
 
     return FakePlateResult(
         is_fake=is_fake,
-        flags=flags,
+        flags=flags,   # keep all flags for UI display / audit trail
         details=details,
         confidence=confidence,
     )

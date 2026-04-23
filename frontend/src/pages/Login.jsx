@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Mail, Chrome } from 'lucide-react';
+import { Shield, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -8,9 +8,8 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
-  const { user, loading, login, loginWithGoogle } = useAuth();
+  const { user, loading, login } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,41 +25,30 @@ export default function Login() {
 
     try {
       await login(email, password);
+      // AuthContext will gate access — if no role claim, it signs the user out
+      // and user stays null, so the navigate below won't fire.
       navigate('/', { replace: true });
     } catch (err) {
       const code = err.code || '';
-      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        setError('Access denied. Only authorized personnel can sign in. Contact your administrator.');
+      if (
+        code === 'auth/user-not-found' ||
+        code === 'auth/invalid-credential' ||
+        code === 'auth/user-disabled'
+      ) {
+        setError('Access denied. This account is not authorised. Contact your administrator.');
       } else if (code === 'auth/wrong-password') {
-        setError('Invalid password. Please try again.');
+        setError('Incorrect password. Please try again.');
+      } else if (code === 'auth/invalid-email') {
+        setError('Invalid email address format.');
       } else if (code === 'auth/too-many-requests') {
         setError('Too many failed attempts. Account temporarily locked. Try again later.');
+      } else if (code === 'auth/network-request-failed') {
+        setError('Network error. Check your connection and try again.');
       } else {
-        setError(err.message || 'Authentication failed. Please try again.');
+        setError('Authentication failed. Contact your administrator if this persists.');
       }
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setError('');
-    setGoogleLoading(true);
-
-    try {
-      await loginWithGoogle();
-      navigate('/', { replace: true });
-    } catch (err) {
-      const code = err.code || '';
-      if (code === 'auth/popup-closed-by-user') {
-        // User closed popup, ignore
-      } else if (code === 'auth/unauthorized-domain') {
-        setError('This domain is not authorized for Google sign-in. Contact administrator.');
-      } else {
-        setError('Google sign-in failed. Ensure your account is authorized by an admin.');
-      }
-    } finally {
-      setGoogleLoading(false);
     }
   };
 
@@ -103,7 +91,7 @@ export default function Login() {
               id="email"
               className="form-input"
               type="email"
-              placeholder="Enter your authorized email"
+              placeholder="Enter your authorised email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -129,42 +117,19 @@ export default function Login() {
             type="submit"
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center', gap: '8px' }}
-            disabled={isLoading || googleLoading}
+            disabled={isLoading}
           >
             <Mail size={16} />
-            {isLoading ? 'Signing in...' : 'Sign In with Email'}
+            {isLoading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
-
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '12px',
-          margin: '20px 0', color: 'var(--text-muted)', fontSize: '0.75rem',
-        }}>
-          <div style={{ flex: 1, height: '1px', background: 'rgba(148,163,184,0.15)' }} />
-          <span>OR</span>
-          <div style={{ flex: 1, height: '1px', background: 'rgba(148,163,184,0.15)' }} />
-        </div>
-
-        <button
-          type="button"
-          className="btn btn-secondary"
-          style={{
-            width: '100%', justifyContent: 'center', gap: '8px',
-            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(148,163,184,0.15)',
-          }}
-          onClick={handleGoogleLogin}
-          disabled={isLoading || googleLoading}
-        >
-          <Chrome size={16} />
-          {googleLoading ? 'Signing in...' : 'Sign In with Google'}
-        </button>
 
         <p style={{
           textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)',
           marginTop: '32px', lineHeight: '1.6', letterSpacing: '0.02em',
         }}>
-          Authorized personnel only. Access is logged and monitored.<br/>
-          Contact your network administrator for account issues.
+          Authorised personnel only. Access is logged and monitored.<br/>
+          Contact your network administrator for account access.
         </p>
       </div>
     </div>

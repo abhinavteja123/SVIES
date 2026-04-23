@@ -79,6 +79,9 @@ export const api = {
 
   getZones: () => fetchJSON('/api/zones'),
 
+  refreshZones: (lat, lon, radiusM = 3000) =>
+    fetchJSON(`/api/zones/refresh?lat=${lat}&lon=${lon}&radius_m=${radiusM}`, { method: 'POST' }),
+
   getVehicle: (plate, days = 90) =>
     fetchJSON(`/api/vehicle/${encodeURIComponent(plate)}?days=${days}`),
 

@@ -2,31 +2,46 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
 } from 'firebase/auth';
-import { auth, googleProvider } from '../config/firebase';
+import { auth } from '../config/firebase';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState('VIEWER');
+  const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        setUser(firebaseUser);
         try {
           const token = await firebaseUser.getIdTokenResult(true);
-          setRole(token.claims.role || 'VIEWER');
+          const userRole = token.claims.role;
+
+          // ── Government portal: only admin-registered users with an explicit
+          //    role claim are allowed in. If there's no role claim at all,
+          //    the account was never registered by an admin → sign out.
+          if (!userRole) {
+            await signOut(auth);
+            setUser(null);
+            setRole(null);
+            setLoading(false);
+            return;
+          }
+
+          setUser(firebaseUser);
+          setRole(userRole);
         } catch {
-          setRole('VIEWER');
+          // Token retrieval failed → sign out to be safe
+          await signOut(auth);
+          setUser(null);
+          setRole(null);
         }
       } else {
         setUser(null);
-        setRole('VIEWER');
+        setRole(null);
       }
       setLoading(false);
     });
@@ -36,10 +51,6 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     return signInWithEmailAndPassword(auth, email, password);
-  };
-
-  const loginWithGoogle = async () => {
-    return signInWithPopup(auth, googleProvider);
   };
 
   const logout = async () => {
@@ -53,11 +64,17 @@ export function AuthProvider({ children }) {
 
   const refreshRole = async () => {
     if (!user) return;
-    const token = await user.getIdTokenResult(true);
-    setRole(token.claims.role || 'VIEWER');
+    try {
+      const token = await user.getIdTokenResult(true);
+      setRole(token.claims.role || null);
+    } catch {
+      await signOut(auth);
+      setUser(null);
+      setRole(null);
+    }
   };
 
-  const value = { user, role, loading, login, loginWithGoogle, logout, getToken, refreshRole };
+  const value = { user, role, loading, login, logout, getToken, refreshRole };
 
   return (
     <AuthContext.Provider value={value}>

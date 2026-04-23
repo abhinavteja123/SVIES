@@ -144,24 +144,83 @@ export default function Offenders() {
                                         </tr>
                                         {expanded === o.plate && (
                                             <tr>
-                                                <td colSpan={7} style={{ padding: 20, background: '#111827' }}>
-                                                    <strong style={{ fontSize: 13 }}>Violation History ({(historyMap[o.plate] || []).length} records)</strong>
+                                                <td colSpan={7} style={{ padding: '16px 20px', background: '#0f172a', borderTop: '2px solid #1e293b' }}>
+                                                    <strong style={{ fontSize: 13, color: '#e2e8f0', display: 'block', marginBottom: 10 }}>
+                                                        Violation History — {o.plate} &nbsp;({(historyMap[o.plate] || []).length} records)
+                                                    </strong>
                                                     {(historyMap[o.plate] || []).length > 0 ? (
-                                                        <table className="data-table" style={{ marginTop: 10 }}>
-                                                            <thead>
-                                                                <tr><th>Date</th><th>Violations</th><th>Score</th><th>Level</th></tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                {(historyMap[o.plate] || []).slice(0, 10).map((h, j) => (
-                                                                    <tr key={j}>
-                                                                        <td style={{ fontSize: 12 }}>{h.timestamp ? new Date(h.timestamp).toLocaleString() : '\u2014'}</td>
-                                                                        <td style={{ fontSize: 12 }}>{h.violation_types || '\u2014'}</td>
-                                                                        <td>{h.risk_score}</td>
-                                                                        <td><span className={`badge badge-${(h.alert_level || 'low').toLowerCase()}`}>{h.alert_level}</span></td>
+                                                        <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid #1e293b' }}>
+                                                            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                                                                <colgroup>
+                                                                    <col style={{ width: '160px' }} />
+                                                                    <col style={{ width: 'auto' }} />
+                                                                    <col style={{ width: '60px' }} />
+                                                                    <col style={{ width: '90px' }} />
+                                                                </colgroup>
+                                                                <thead>
+                                                                    <tr style={{ background: '#1e293b' }}>
+                                                                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.05em' }}>DATE</th>
+                                                                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.05em' }}>VIOLATIONS</th>
+                                                                        <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.05em' }}>SCORE</th>
+                                                                        <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.05em' }}>LEVEL</th>
                                                                     </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {(historyMap[o.plate] || []).slice(0, 15).map((h, j) => (
+                                                                        <tr key={j} style={{ borderTop: '1px solid #1e293b', background: j % 2 === 0 ? '#111827' : '#0f172a' }}>
+                                                                            <td style={{ padding: '8px 12px', fontSize: 12, color: '#cbd5e1', whiteSpace: 'nowrap' }}>
+                                                                                {h.timestamp ? new Date(h.timestamp).toLocaleString() : '—'}
+                                                                            </td>
+                                                                            <td style={{
+                                                                                padding: '8px 12px',
+                                                                                fontSize: 11,
+                                                                                color: '#94a3b8',
+                                                                                wordBreak: 'break-word',
+                                                                                whiteSpace: 'normal',
+                                                                                lineHeight: '1.5',
+                                                                            }}>
+                                                                                {(h.violation_types || '—')
+                                                                                    .split(',')
+                                                                                    .map((v, vi) => (
+                                                                                        <span key={vi} style={{
+                                                                                            display: 'inline-block',
+                                                                                            background: '#1e293b',
+                                                                                            color: '#93c5fd',
+                                                                                            borderRadius: 4,
+                                                                                            padding: '1px 6px',
+                                                                                            margin: '2px 3px 2px 0',
+                                                                                            fontSize: 10,
+                                                                                            fontFamily: 'monospace',
+                                                                                        }}>{v.trim()}</span>
+                                                                                    ))
+                                                                                }
+                                                                            </td>
+                                                                            <td style={{ padding: '8px 12px', textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>
+                                                                                {h.risk_score}
+                                                                            </td>
+                                                                            <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                                                                <span style={{
+                                                                                    fontSize: 11,
+                                                                                    fontWeight: 700,
+                                                                                    padding: '3px 8px',
+                                                                                    borderRadius: 12,
+                                                                                    background: {
+                                                                                        CRITICAL: '#450a0a', HIGH: '#431407',
+                                                                                        MEDIUM: '#422006', LOW: '#052e16'
+                                                                                    }[h.alert_level] || '#1e293b',
+                                                                                    color: {
+                                                                                        CRITICAL: '#f87171', HIGH: '#fb923c',
+                                                                                        MEDIUM: '#fbbf24', LOW: '#4ade80'
+                                                                                    }[h.alert_level] || '#94a3b8',
+                                                                                }}>
+                                                                                    {h.alert_level || '—'}
+                                                                                </span>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
                                                     ) : <p style={{ color: '#64748b', marginTop: 8 }}>No records found.</p>}
                                                 </td>
                                             </tr>

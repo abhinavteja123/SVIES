@@ -247,6 +247,7 @@ class SVIESDatabase:
     def lookup_vehicle(self, plate: str) -> dict | None:
         """Look up vehicle registration data (VAHAN database)."""
         plate = plate.upper().strip()
+        # ── Primary lookup: exact match (fast) ──
         response = (
             self._supabase.table("vehicles")
             .select("*")
@@ -254,7 +255,27 @@ class SVIESDatabase:
             .limit(1)
             .execute()
         )
-        return response.data[0] if response.data else None
+        if response.data:
+            logger.debug(f"lookup_vehicle('{plate}'): found via eq match")
+            return response.data[0]
+
+        # ── Fallback: case-insensitive match (handles any casing stored in DB) ──
+        response2 = (
+            self._supabase.table("vehicles")
+            .select("*")
+            .ilike("plate", plate)
+            .limit(1)
+            .execute()
+        )
+        if response2.data:
+            logger.warning(f"lookup_vehicle('{plate}'): found via ilike fallback "
+                           f"(stored as '{response2.data[0].get('plate')}'). "
+                           f"Consider normalising plate casing in DB.")
+            return response2.data[0]
+
+        logger.warning(f"lookup_vehicle('{plate}'): NOT FOUND in vehicles table. "
+                       f"eq response had {len(response.data)} rows, ilike had {len(response2.data)} rows.")
+        return None
 
     def lookup_pucc(self, plate: str) -> dict | None:
         """Look up a Pollution Under Control Certificate record."""

@@ -62,37 +62,97 @@ def generate_court_summons(plate: str, owner_name: str, violations_history: list
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 
-        doc = SimpleDocTemplate(str(filepath), pagesize=A4, topMargin=25*mm, bottomMargin=25*mm)
+        doc = SimpleDocTemplate(
+            str(filepath), pagesize=A4,
+            topMargin=25*mm, bottomMargin=25*mm,
+            leftMargin=20*mm, rightMargin=20*mm,
+        )
         elements = []
         styles = getSampleStyleSheet()
+
+        # ── Custom cell styles ──
+        cell_sm  = ParagraphStyle('CellSm',  parent=styles['Normal'], fontSize=7, leading=9,  wordWrap='CJK', alignment=TA_LEFT)
+        cell_ctr = ParagraphStyle('CellCtr', parent=styles['Normal'], fontSize=7, leading=9,  alignment=TA_CENTER)
+        th_style = ParagraphStyle('TH',      parent=styles['Normal'], fontSize=8, leading=10,
+                                  fontName='Helvetica-Bold', textColor=colors.white, alignment=TA_CENTER)
+
+        # ── Page header ──
         elements.append(Paragraph("SVIES — Court Summons Notice", styles['Title']))
-        elements.append(Spacer(1, 10*mm))
+        elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1a1a2e')))
+        elements.append(Spacer(1, 6*mm))
         elements.append(Paragraph(f"<b>Vehicle:</b> {plate}", styles['Normal']))
-        elements.append(Paragraph(f"<b>Owner:</b> {owner_name}", styles['Normal']))
+        elements.append(Paragraph(f"<b>Owner:</b> {owner_name or 'Unknown'}", styles['Normal']))
         elements.append(Paragraph(f"<b>Date:</b> {datetime.now().strftime('%d-%m-%Y')}", styles['Normal']))
         elements.append(Paragraph(f"<b>Total Violations:</b> {len(violations_history)}", styles['Normal']))
         elements.append(Spacer(1, 8*mm))
-        data = [["#", "Date", "Violations", "Score", "Level"]]
-        for i, v in enumerate(violations_history[:15], 1):
-            data.append([str(i), v.get("timestamp", "")[:19], v.get("violation_types", ""),
-                        str(v.get("risk_score", 0)), v.get("alert_level", "")])
-        t = Table(data, colWidths=[15*mm, 40*mm, 60*mm, 20*mm, 20*mm])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ]))
+
+        # Column widths: #=10, Date=34, Violations=80, Score=18, Level=28 → 170mm (= A4 - 2×20mm margins)
+        COL_W = [10*mm, 34*mm, 80*mm, 18*mm, 28*mm]
+
+        # ── Table header ──
+        data = [[
+            Paragraph("#", th_style),
+            Paragraph("Date", th_style),
+            Paragraph("Violations", th_style),
+            Paragraph("Score", th_style),
+            Paragraph("Level", th_style),
+        ]]
+
+        # ── Data rows ──
+        LEVEL_COLORS = {
+            'CRITICAL': '#dc2626', 'HIGH': '#ea580c',
+            'MEDIUM': '#d97706',   'LOW':  '#16a34a',
+        }
+        for i, v in enumerate(violations_history[:20], 1):
+            raw   = (v.get("violation_types", "") or "").replace(",", "\n").strip()
+            level = v.get("alert_level", "LOW")
+            lc    = LEVEL_COLORS.get(level, '#333333')
+            data.append([
+                Paragraph(str(i), cell_ctr),
+                Paragraph(v.get("timestamp", "")[:19].replace("T", " "), cell_ctr),
+                Paragraph(raw, cell_sm),
+                Paragraph(str(v.get("risk_score", 0)), cell_ctr),
+                Paragraph(f'<font color="{lc}"><b>{level}</b></font>', cell_ctr),
+            ])
+
+        # ── Table style ──
+        ts = [
+            ('BACKGROUND',    (0, 0), (-1, 0),  colors.HexColor('#1a1a2e')),
+            ('TEXTCOLOR',     (0, 0), (-1, 0),  colors.white),
+            ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING',    (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
+            ('LINEBELOW',     (0, 0), (-1, 0),  1.5, colors.HexColor('#1a1a2e')),
+        ]
+        for r in range(2, len(data), 2):          # alternating row shading
+            ts.append(('BACKGROUND', (0, r), (-1, r), colors.HexColor('#F5F5F5')))
+
+        t = Table(data, colWidths=COL_W, repeatRows=1)
+        t.setStyle(TableStyle(ts))
         elements.append(t)
         elements.append(Spacer(1, 10*mm))
+        elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
+        elements.append(Spacer(1, 4*mm))
         elements.append(Paragraph(
-            "The registered owner is summoned to appear before the designated Traffic Court within 15 days.",
-            styles['Normal']))
+            "The registered owner is <b>summoned</b> to appear before the designated "
+            "Traffic Court within <b>15 days</b> of this notice. "
+            "Failure to appear may result in further legal action.",
+            styles['Normal'],
+        ))
+        elements.append(Spacer(1, 5*mm))
+        elements.append(Paragraph(
+            f"<i>Generated by SVIES — Smart Vehicle Intelligence &amp; Enforcement System "
+            f"| {datetime.now().strftime('%d-%m-%Y %H:%M')}</i>",
+            ParagraphStyle('Note', parent=styles['Normal'], fontSize=7, textColor=colors.grey),
+        ))
         doc.build(elements)
         print(f"[PDF] Court summons: {filepath}")
         return str(filepath)

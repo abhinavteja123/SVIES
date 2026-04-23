@@ -100,7 +100,7 @@ from api.models import (
 )
 from config import RATE_LIMIT_DEFAULT, RATE_LIMIT_UPLOAD, MODEL_VERSION, OCR_MIN_CONFIDENCE, CONFIDENCE_THRESHOLD
 from modules.offender_tracker import generate_court_summons
-from modules.geofence import get_all_zones, check_zone, get_priority_multiplier
+from modules.geofence import get_all_zones, check_zone, get_priority_multiplier, load_osm_zones
 from modules.risk_scorer import calculate_risk, RISK_WEIGHTS
 from modules.db_intelligence import check_vehicle
 from modules.fake_plate import check_fake_plate
@@ -159,14 +159,24 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── CORS origins — allow all in development ──
-_CORS_ORIGINS = ["*"]
+# ── CORS origins — read from environment (production-safe) ──
+_cors_env = _os.environ.get("CORS_ORIGINS", "")
+if _cors_env:
+    _CORS_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    # Fallback: localhost dev origins only — never wildcard in production
+    _CORS_ORIGINS = [
+        "http://localhost:5173", "http://localhost:5174",
+        "http://localhost:5175", "http://localhost:3000",
+        "http://127.0.0.1:5173", "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175", "http://127.0.0.1:3000",
+    ]
 logger.info(f"CORS origins: {_CORS_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -350,6 +360,49 @@ async def get_zones(request: Request, user: dict = Depends(require_viewer)):
             "multiplier": get_priority_multiplier(z.get("type", "")),
         })
     return {"zones": enriched}
+
+
+@app.post("/api/zones/refresh")
+@limiter.limit("5/minute")
+async def refresh_zones_from_osm(
+    request: Request,
+    lat: float = Query(17.385, description="Latitude of the map center"),
+    lon: float = Query(78.4867, description="Longitude of the map center"),
+    radius_m: int = Query(3000, ge=500, le=10000, description="Search radius in metres"),
+    user: dict = Depends(require_viewer),
+):
+    """Pull live zones from OpenStreetMap Overpass API and merge into the geofence engine.
+
+    Fetches real schools, hospitals, universities, and government buildings
+    within ``radius_m`` metres of (lat, lon) and adds any new ones to the
+    active zone list returned by /api/zones.
+
+    This makes the zone map *dynamic*: the UI can call this with the current
+    map centre to expand coverage beyond the hardcoded zones.json polygons.
+    """
+    try:
+        added = await asyncio.to_thread(load_osm_zones, lat, lon, radius_m)
+        all_zones = get_all_zones()
+        enriched = []
+        for z in all_zones:
+            coords = z.get("polygon", [])
+            center_lat = sum(c[1] for c in coords) / len(coords) if coords else 0
+            center_lon = sum(c[0] for c in coords) / len(coords) if coords else 0
+            enriched.append({
+                **z,
+                "center": {"lat": center_lat, "lon": center_lon},
+                "multiplier": get_priority_multiplier(z.get("type", "")),
+            })
+        return {
+            "status": "ok",
+            "osm_zones_added": added,
+            "total_zones": len(enriched),
+            "zones": enriched,
+            "message": f"Fetched from OpenStreetMap: +{added} new zone(s) near ({lat:.4f}, {lon:.4f}), radius {radius_m}m.",
+        }
+    except Exception as exc:
+        logger.warning(f"OSM zone refresh failed: {exc}")
+        return JSONResponse(status_code=502, content={"error": f"OSM fetch failed: {exc}"})
 
 
 @app.get("/api/vehicle/{plate}")
@@ -1770,14 +1823,26 @@ async def set_user_role(request: Request, body: SetRoleRequest, user: dict = Dep
 @app.post("/api/auth/bootstrap-admin")
 @limiter.limit(RATE_LIMIT_UPLOAD)
 async def bootstrap_admin(request: Request, user: dict = Depends(get_current_user)):
-    """One-time bootstrap: promote the calling user to ADMIN if no admin exists yet."""
+    """One-time bootstrap: promote the calling user to ADMIN if no admin exists yet.
+
+    Requires the SVIES_BOOTSTRAP_SECRET env variable to match the 'secret' field
+    in the request body. This prevents arbitrary VIEWER users from self-promoting.
+    """
     if _NO_AUTH_MODE or firebase_auth is None:
         return {"status": "ok", "message": "No-auth mode — already admin."}
 
-    if user.get("role", "VIEWER") not in ("VIEWER", ""):
-        return JSONResponse(status_code=403, content={
-            "error": f"Bootstrap is only available for VIEWER users. Your role: {user.get('role')}"
+    # ── Secret gate: must provide the bootstrap secret ──
+    _bootstrap_secret = _os.environ.get("SVIES_BOOTSTRAP_SECRET", "")
+    if not _bootstrap_secret:
+        return JSONResponse(status_code=503, content={
+            "error": "Bootstrap endpoint is disabled (SVIES_BOOTSTRAP_SECRET not configured)."
         })
+
+    body = await request.json()
+    provided_secret = body.get("secret", "")
+    if provided_secret != _bootstrap_secret:
+        logger.warning(f"Bootstrap attempt with wrong secret from {user.get('email')}")
+        return JSONResponse(status_code=403, content={"error": "Invalid bootstrap secret."})
 
     # One-time guard: check if any ADMIN already exists
     try:
@@ -1789,10 +1854,11 @@ async def bootstrap_admin(request: Request, user: dict = Depends(get_current_use
                     "error": "An admin already exists. Contact the existing admin for role changes."
                 })
     except Exception:
-        pass  # If we can't check, allow bootstrap to proceed
+        pass
 
     try:
         firebase_auth.set_custom_user_claims(user["uid"], {"role": "ADMIN"})
+        logger.info(f"Bootstrap: {user.get('email')} promoted to ADMIN")
         return {
             "status": "ok",
             "message": f"User {user['email']} promoted to ADMIN. Please sign out and sign back in.",

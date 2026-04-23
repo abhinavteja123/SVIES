@@ -12,7 +12,7 @@ export default function TopBar() {
       <div className="topbar-right">
         <span className="topbar-dept">Ministry of Road Transport & Highways</span>
         <span className="badge badge-medium" style={{ marginLeft: '12px', padding: '6px 12px' }}>
-          {role}
+          {role || '—'}
         </span>
       </div>
     </header>
